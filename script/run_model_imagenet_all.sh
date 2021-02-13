@@ -14,3 +14,5 @@ python3 ../main_pcl.py /work/tianqinl/imagenet/ \
 --data-root imagenet_unzip \
 --warmup-epoch 10 \
 --save-cluster-epoch 3 \
+--workers 8 \
+--resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0049.pth.tar \s

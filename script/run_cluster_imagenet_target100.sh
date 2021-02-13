@@ -10,19 +10,18 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-python3 ../main_pcl.py /work/tianqinl/imagenet/ \
+python3 ../get_labels.py /work/tianqinl/imagenet/ \
 -a resnet50 \
 --lr 0.03 \
 --batch-size 64 \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/imagenet/target_100 \
+--exp-dir /results/tianqinl/train_related/imagenet/target_100_cluster_results \
 --warmup-epoch 1 \
 --data-root train_100 \
 --save-cluster-epoch 5 \
 --workers 8 \
---resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0049.pth.tar \
 
 ### LOG
 ## running tmux 11

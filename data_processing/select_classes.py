@@ -3,8 +3,8 @@ import json
 import subprocess
 
 filename = "/work/tianqinl/imagenet/class_digital_map.json"
-target_folder = "/work/tianqinl/imagenet/train_100"
-source_root = "/work/tianqinl/imagenet/imagenet_unzip/"
+target_folder = "/work/tianqinl/imagenet/val_100"
+source_root = "/work/tianqinl/imagenet/validation_folder/"
 
 with open(filename, 'r') as f:
     target_classes = json.load(f)

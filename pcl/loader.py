@@ -27,6 +27,14 @@ class GaussianBlur(object):
         return x
     
 
+class ImageFolderInstanceClass(datasets.ImageFolder):
+    def __getitem__(self, index):
+        path, target = self.samples[index]
+        sample = self.loader(path)
+        if self.transform is not None:
+            sample = self.transform(sample)           
+        return sample, index, target
+
 class ImageFolderInstance(datasets.ImageFolder):
     def __getitem__(self, index):
         path, target = self.samples[index]
@@ -34,3 +42,4 @@ class ImageFolderInstance(datasets.ImageFolder):
         if self.transform is not None:
             sample = self.transform(sample)           
         return sample, index
+
