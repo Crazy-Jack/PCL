@@ -102,6 +102,10 @@ parser.add_argument('--warmup-epoch', default=20, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
 parser.add_argument('--exp-dir', default='experiment_pcl', type=str,
                     help='experiment directory')
+parser.add_argument('--save-cluster-epoch', type=int, default=1,
+                    help='number of epochs during which the cluster results is saved.')
+parser.add_argument('--data-root', type=str, default="imagenet_unzip", 
+                    help='data root for ImageFolder')
 
 def main():
     args = parser.parse_args()
@@ -124,20 +128,27 @@ def main():
         args.world_size = int(os.environ["WORLD_SIZE"])
 
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
-    
+    print(f"args.distributed {args.distributed}")
     args.num_cluster = args.num_cluster.split(',')
     
     if not os.path.exists(args.exp_dir):
-        os.mkdir(args.exp_dir)
+        os.makedirs(args.exp_dir, exist_ok=True)
     
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
+        print("multiprocessing_distributed")
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+        try:
+            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+            print("no error?")
+        except Exception as e:
+            print(f"Error: {e}")
+
+        print("Break??")
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -227,7 +238,7 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
+    traindir = os.path.join(args.data, args.data_root)
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     
@@ -305,7 +316,9 @@ def main_worker(gpu, ngpus_per_node, args):
                 features = features.numpy()
                 cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
                 # save the clustering result
-                # torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
+                if (epoch+1) % args.save_cluster_epoch == 0:
+                    print("\nSaving cluster results...\n")
+                    torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
             dist.barrier()  
             # broadcast clustering result
