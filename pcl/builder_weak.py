@@ -54,7 +54,8 @@ class MoCo(nn.Module):
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
         # gather keys before updating queue
-        keys = concat_all_gather(keys)
+        if self.distributed:
+            keys = concat_all_gather(keys)
 
         batch_size = keys.shape[0]
 
@@ -64,6 +65,8 @@ class MoCo(nn.Module):
         # replace the keys at ptr (dequeue and enqueue)
         self.queue[:, ptr:ptr + batch_size] = keys.T
         ptr = (ptr + batch_size) % self.r  # move pointer
+
+        print(f"queue {self.queue.shape}")
 
         self.queue_ptr[0] = ptr
 
@@ -114,7 +117,9 @@ class MoCo(nn.Module):
         """
         # gather from all gpus
         batch_size_this = x.shape[0]
+
         x_gather = concat_all_gather(x)
+
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
@@ -145,24 +150,34 @@ class MoCo(nn.Module):
         # compute key features
         with torch.no_grad():  # no gradient to keys
             self._momentum_update_key_encoder()  # update the key encoder
+            
+            if self.distributed:
+                # shuffle for making use of BN
+                im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
 
-            # shuffle for making use of BN
-            im_k, idx_unshuffle = self._batch_shuffle_ddp(im_k)
+                k = self.encoder_k(im_k)  # keys: NxC
+                k = nn.functional.normalize(k, dim=1)
 
-            k = self.encoder_k(im_k)  # keys: NxC
-            k = nn.functional.normalize(k, dim=1)
+                # undo shuffle
+                k = self._batch_unshuffle_ddp(k, idx_unshuffle)
+            else:
+                k = self.encoder_k(im_k)  # keys: NxC
+                k = nn.functional.normalize(k, dim=1)
 
-            # undo shuffle
-            k = self._batch_unshuffle_ddp(k, idx_unshuffle)
 
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
+
+
+        print("=====")
+        print(f"q {q.shape}; k {k.shape}")
         
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
-        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
+        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1) # take diagnoal out of q x k.T (n, n) -> n
+        print(f"l_pos {l_pos.shape}")
         # negative logits: Nxr
         l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
 
@@ -244,7 +259,7 @@ if __name__ == '__main__':
         low_dim, pcl_r, moco_m, temperature, mlp, distributed=False)
 
     # test
-    n, c, h, w = 32, 3, 224, 224
+    n, c, h, w = 64, 3, 224, 224
     image1 = torch.rand(n, c, h, w)
     image2 = torch.rand(n, c, h, w)
     cluster_result = None 

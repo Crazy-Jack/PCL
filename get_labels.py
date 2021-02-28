@@ -102,13 +102,10 @@ parser.add_argument('--warmup-epoch', default=20, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
 parser.add_argument('--exp-dir', default='experiment_pcl', type=str,
                     help='experiment directory')
-parser.add_argument('--save-epoch', type=int, default=2,
+parser.add_argument('--save-cluster-epoch', type=int, default=1,
                     help='number of epochs during which the cluster results is saved.')
 parser.add_argument('--data-root', type=str, default="imagenet_unzip", 
                     help='data root for ImageFolder')
-parser.add_argument('--perform_cluster_epoch', type=int, default=2, 
-                    help='number of epochs that perform the clustering')
-
 
 def main():
     args = parser.parse_args()
@@ -139,19 +136,12 @@ def main():
     
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
-        print("multiprocessing_distributed")
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        try:
-            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-            print("no error?")
-        except Exception as e:
-            print(f"Error: {e}")
-
-        print("Break??")
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -280,10 +270,12 @@ def main_worker(gpu, ngpus_per_node, args):
     train_dataset = pcl.loader.ImageFolderInstance(
         traindir,
         pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
-    eval_dataset = pcl.loader.ImageFolderInstance(
+    eval_dataset = pcl.loader.ImageFolderInstanceClass(
         traindir,
         eval_augmentation)
-    
+    print("class to index for eval dataset")
+    print(eval_dataset.class_to_idx)
+    print(eval_dataset.classes)
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
         eval_sampler = torch.utils.data.distributed.DistributedSampler(eval_dataset,shuffle=False)
@@ -300,52 +292,52 @@ def main_worker(gpu, ngpus_per_node, args):
         eval_dataset, batch_size=args.batch_size*5, shuffle=False,
         sampler=eval_sampler, num_workers=args.workers, pin_memory=True)
     
-    for epoch in range(args.start_epoch, args.epochs):
+    features, indices = compute_features(eval_loader, model, args)
+    torch.save(indices, os.path.join(args.exp_dir, "class.pt"))
+    # for epoch in range(args.start_epoch, args.epochs):
         
-        cluster_result = None
-        if epoch>=args.warmup_epoch:
+    #     cluster_result = None
+    #     if epoch>=args.warmup_epoch:
+    #         # compute momentum features for center-cropped images
+    #         features = compute_features(eval_loader, model, args)         
+            
+    #         # placeholder for clustering result
+    #         cluster_result = {'im2cluster':[],'centroids':[],'density':[]}
+    #         for num_cluster in args.num_cluster:
+    #             cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
+    #             cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
+    #             cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
 
-            if (epoch+1) % args.perform_cluster_epoch == 0:
-                # compute momentum features for center-cropped images
-                features = compute_features(eval_loader, model, args)         
+    #         if args.gpu == 0:
+    #             features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
+    #             features = features.numpy()
+    #             cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
+    #             # save the clustering result
+    #             if (epoch+1) % args.save_cluster_epoch == 0:
+    #                 print("\nSaving cluster results...\n")
+    #                 torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
-                # placeholder for clustering result
-                cluster_result = {'im2cluster':[],'centroids':[],'density':[]}
-                for num_cluster in args.num_cluster:
-                    cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
-                    cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
-                    cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda()) 
-
-                if args.gpu == 0:
-                    features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice  
-                    features = features.numpy()
-                    cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
-                    # save the clustering result
-                    if (epoch+1) % args.save_epoch == 0:
-                        print("\nSaving cluster results...\n")
-                        torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
-                    
-                dist.barrier()  
-                # broadcast clustering result
-                for k, data_list in cluster_result.items():
-                    for data_tensor in data_list:                
-                        dist.broadcast(data_tensor, 0, async_op=False)     
+    #         dist.barrier()  
+    #         # broadcast clustering result
+    #         for k, data_list in cluster_result.items():
+    #             for data_tensor in data_list:                
+    #                 dist.broadcast(data_tensor, 0, async_op=False)     
     
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-        adjust_learning_rate(optimizer, epoch, args)
+    #     if args.distributed:
+    #         train_sampler.set_epoch(epoch)
+    #     adjust_learning_rate(optimizer, epoch, args)
 
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+        # # train for one epoch
+        # train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
 
-        if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                and args.rank % ngpus_per_node == 0)):
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
+        # if (epoch+1)%5==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
+        #         and args.rank % ngpus_per_node == 0)):
+        #     save_checkpoint({
+        #         'epoch': epoch + 1,
+        #         'arch': args.arch,
+        #         'state_dict': model.state_dict(),
+        #         'optimizer' : optimizer.state_dict(),
+        #     }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
@@ -406,23 +398,25 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
         if i % args.print_freq == 0:
             progress.display(i)
 
-        # free the cache
-        del images
-        torch.cuda.empty_cache()
-
             
 def compute_features(eval_loader, model, args):
     print('Computing features...')
     model.eval()
     features = torch.zeros(len(eval_loader.dataset),args.low_dim).cuda()
-    for i, (images, index) in enumerate(tqdm(eval_loader)):
+    indices = torch.zeros(len(eval_loader.dataset)).long().cuda()
+    for i, (images, index, targets) in enumerate(tqdm(eval_loader)):
         with torch.no_grad():
             images = images.cuda(non_blocking=True)
             feat = model(images,is_eval=True) 
             features[index] = feat
+            print(f"index === {index}")
+            print(f"target == {targets}")
+            indices[index] = targets.cuda(non_blocking=True)
+    print(indices)
+    print(len(indices))
     dist.barrier()        
     dist.all_reduce(features, op=dist.ReduceOp.SUM)     
-    return features.cpu()
+    return features.cpu(), indices.cpu()
 
     
 def run_kmeans(x, args):

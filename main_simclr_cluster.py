@@ -24,7 +24,8 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 
 import pcl.loader
-import pcl.builder
+import pcl.builder_cluster
+import pcl.SupConLoss
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -96,7 +97,7 @@ parser.add_argument('--aug-plus', action='store_true',
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
 
-parser.add_argument('--num-cluster', default='25000,50000,100000', type=str, 
+parser.add_argument('--num-cluster', default='100,500,1000', type=str, 
                     help='number of clusters')
 parser.add_argument('--warmup-epoch', default=20, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
@@ -106,8 +107,13 @@ parser.add_argument('--save-epoch', type=int, default=2,
                     help='number of epochs during which the cluster results is saved.')
 parser.add_argument('--data-root', type=str, default="imagenet_unzip", 
                     help='data root for ImageFolder')
-parser.add_argument('--perform_cluster_epoch', type=int, default=2, 
+parser.add_argument('--perform-cluster-epoch', type=int, default=2, 
                     help='number of epochs that perform the clustering')
+
+# parser.add_argument('--latent-class', type=str, default="hier_target100",
+#                     help="meta data folder for containing image")
+# parser.add_argument('--meta-data-train', type=str, default="meta_file_train_target100.csv")
+# parser.add_argument('--gran-lvl', type=str, required=True)
 
 
 def main():
@@ -139,19 +145,12 @@ def main():
     
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
-        print("multiprocessing_distributed")
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        try:
-            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-            print("no error?")
-        except Exception as e:
-            print(f"Error: {e}")
-
-        print("Break??")
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -180,9 +179,9 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = pcl.builder.MoCo(
+    model = pcl.builder_cluster.MoCo(
         models.__dict__[args.arch],
-        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
+        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
     print(model)
 
     if args.distributed:
@@ -215,6 +214,9 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+    # define supercon loss
+    supcon_criterion = pcl.SupConLoss.SupConLoss(temperature=args.temperature)
+
 
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
@@ -242,6 +244,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
+    # latent_class_dir = os.path.join(args.data, args.latent_class)
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     
@@ -277,12 +280,21 @@ def main_worker(gpu, ngpus_per_node, args):
         normalize
         ])    
        
+    
+    ###############
+    #   Dataset   #
+    ###############
     train_dataset = pcl.loader.ImageFolderInstance(
         traindir,
         pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
     eval_dataset = pcl.loader.ImageFolderInstance(
         traindir,
         eval_augmentation)
+    # train_df = pd.read_csv(os.path.join(latent_class_dir, agrs.meta_data_train), index_col=0)
+
+    # train_dataset = pcl.loader.DynamicLabelDataset(train_df, train_dir, args.gran_lvl, transforms.Compose(augmentation))
+    # eval_dataset = pcl.loader.DynamicLabelDataset(train_df, train_dir, args.gran_lvl, eval_augmentation)
+
     
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -297,11 +309,11 @@ def main_worker(gpu, ngpus_per_node, args):
     
     # dataloader for center-cropped images, use larger batch size to increase speed
     eval_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size*5, shuffle=False,
+        eval_dataset, batch_size=args.batch_size, shuffle=False,
         sampler=eval_sampler, num_workers=args.workers, pin_memory=True)
     
     for epoch in range(args.start_epoch, args.epochs):
-        
+    
         cluster_result = None
         if epoch>=args.warmup_epoch:
 
@@ -324,7 +336,7 @@ def main_worker(gpu, ngpus_per_node, args):
                     if (epoch+1) % args.save_epoch == 0:
                         print("\nSaving cluster results...\n")
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
-                    
+                
                 dist.barrier()  
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():
@@ -336,7 +348,7 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -348,7 +360,7 @@ def main_worker(gpu, ngpus_per_node, args):
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
+def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -373,22 +385,20 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
                 
         # compute output
-        output, target, output_proto, target_proto = model(im_q=images[0], im_k=images[1], cluster_result=cluster_result, index=index)
-        
-        # InfoNCE loss
+        output, target, feat_q, feat_k = model(im_q=images[0], im_k=images[1]) # feat_q, feat_k: NxC, NxC
+        # InfoNCE loss on 
         loss = criterion(output, target)  
         
-        # ProtoNCE loss
-        if output_proto is not None:
-            loss_proto = 0
-            for proto_out,proto_target in zip(output_proto, target_proto):
-                loss_proto += criterion(proto_out, proto_target)  
-                accp = accuracy(proto_out, proto_target)[0] 
-                acc_proto.update(accp[0], images[0].size(0))
-                
-            # average loss across all sets of prototypes
-            loss_proto /= len(args.num_cluster) 
-            loss += loss_proto   
+        if cluster_result is not None:
+            # print("SupCon on learnt clustering...")
+            # Cluster Version of supercon loss
+            # define features
+            features = torch.cat([feat_q.unsqueeze(1), feat_k.unsqueeze(1)], dim=1)
+            # define labels from cluster results
+            for cluster_i in cluster_result['im2cluster']:
+                labels = cluster_i[index]
+                # SupCon Loss for clustering labels
+                loss += supcon_criterion(features, labels)
 
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0] 
@@ -405,8 +415,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
 
         if i % args.print_freq == 0:
             progress.display(i)
-
-        # free the cache
+        
+        # free GPU for that batch
         del images
         torch.cuda.empty_cache()
 

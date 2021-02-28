@@ -9,6 +9,7 @@ import warnings
 from tqdm import tqdm
 import numpy as np
 import faiss
+import datetime
 
 import torch
 import torch.nn as nn
@@ -22,9 +23,13 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+import pandas as pd
 
 import pcl.loader
-import pcl.builder
+import pcl.builder_cluster
+import pcl.SupConLoss
+from pcl.FilterByWeakSupCon import SupConFilterByWeakLabels
+from AutoEval import AutoEval
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -96,7 +101,7 @@ parser.add_argument('--aug-plus', action='store_true',
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
 
-parser.add_argument('--num-cluster', default='25000,50000,100000', type=str, 
+parser.add_argument('--num-cluster', default='100,500,1000', type=str, 
                     help='number of clusters')
 parser.add_argument('--warmup-epoch', default=20, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
@@ -106,8 +111,17 @@ parser.add_argument('--save-epoch', type=int, default=2,
                     help='number of epochs during which the cluster results is saved.')
 parser.add_argument('--data-root', type=str, default="imagenet_unzip", 
                     help='data root for ImageFolder')
-parser.add_argument('--perform_cluster_epoch', type=int, default=2, 
+parser.add_argument('--perform-cluster-epoch', type=int, default=2, 
                     help='number of epochs that perform the clustering')
+parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/script")
+parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
+parser.add_argument('--launch-eval-epoch', type=int, default=30)
+parser.add_argument('--threshold', type=float, default=0.1, help="threshold for determine the hard example")
+
+parser.add_argument('--latent-class', type=str, default="target_class_100",
+                    help="meta data folder for containing image")
+parser.add_argument('--meta-data-train', type=str, default="meta_file_train_target100.csv")
+parser.add_argument('--gran-lvl', type=str, required=True)
 
 
 def main():
@@ -138,20 +152,14 @@ def main():
         os.makedirs(args.exp_dir, exist_ok=True)
     
     ngpus_per_node = torch.cuda.device_count()
+
     if args.multiprocessing_distributed:
-        print("multiprocessing_distributed")
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        try:
-            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-            print("no error?")
-        except Exception as e:
-            print(f"Error: {e}")
-
-        print("Break??")
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -180,9 +188,9 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = pcl.builder.MoCo(
+    model = pcl.builder_cluster.MoCo(
         models.__dict__[args.arch],
-        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
+        args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
     print(model)
 
     if args.distributed:
@@ -215,6 +223,9 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+    # define supercon loss
+    supcon_criterion = SupConFilterByWeakLabels(temperature=args.temperature, threshold=args.threshold)
+
 
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
@@ -242,6 +253,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
+    latent_class_dir = os.path.join(args.data, args.latent_class)
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     
@@ -277,9 +289,17 @@ def main_worker(gpu, ngpus_per_node, args):
         normalize
         ])    
        
-    train_dataset = pcl.loader.ImageFolderInstance(
-        traindir,
-        pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    
+    ###############
+    #   Dataset   #
+    ###############
+    # train_dataset = pcl.loader.DynamicLabelDataset(
+    #     traindir,
+    #     pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    
+    train_df = pd.read_csv(os.path.join(latent_class_dir, args.meta_data_train), index_col=0)
+
+    train_dataset = pcl.loader.DynamicLabelDataset(train_df, traindir, args.gran_lvl, pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
     eval_dataset = pcl.loader.ImageFolderInstance(
         traindir,
         eval_augmentation)
@@ -297,11 +317,21 @@ def main_worker(gpu, ngpus_per_node, args):
     
     # dataloader for center-cropped images, use larger batch size to increase speed
     eval_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size*5, shuffle=False,
+        eval_dataset, batch_size=args.batch_size, shuffle=False,
         sampler=eval_sampler, num_workers=args.workers, pin_memory=True)
     
+    eval_sids = []
+    if not args.resume:
+        print("CLearning the SID log...")
+        with open(os.path.join(args.exp_dir, "Eval_SID.txt"), "w") as f:
+            f.write(f"============\nInitial {datetime.datetime.now()}")
+    
+
+    ###############
+    #   Train   #
+    ###############
     for epoch in range(args.start_epoch, args.epochs):
-        
+    
         cluster_result = None
         if epoch>=args.warmup_epoch:
 
@@ -324,7 +354,14 @@ def main_worker(gpu, ngpus_per_node, args):
                     if (epoch+1) % args.save_epoch == 0:
                         print("\nSaving cluster results...\n")
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
-                    
+                
+                        if (epoch+1) % args.launch_eval_epoch == 0:
+                            # auto eval 
+                            eval_script = os.path.join(args.script_root, args.eval_script_filename)
+                            autoE = AutoEval(args.exp_dir, eval_script)
+                            sid = autoE.eval(epoch)
+                            with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
+                                f.write("epoch " + str(epoch) + " : " + str(sid) + "\n")
                 dist.barrier()  
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():
@@ -336,7 +373,7 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -348,48 +385,50 @@ def main_worker(gpu, ngpus_per_node, args):
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
+def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result=None):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     acc_inst = AverageMeter('Acc@Inst', ':6.2f')   
     acc_proto = AverageMeter('Acc@Proto', ':6.2f')
+    hardexamples = AverageMeter('HardExample', ':6.2f')
     
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, acc_inst, acc_proto],
+        [batch_time, data_time, losses, acc_inst, acc_proto, hardexamples],
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
     model.train()
 
     end = time.time()
-    for i, (images, index) in enumerate(train_loader):
+    for i, (images, index, weak_labels) in tqdm(enumerate(train_loader), total=len(train_loader)):
         # measure data loading time
         data_time.update(time.time() - end)
 
         if args.gpu is not None:
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
-                
+            
+        # send weak labels to gpu
+        weak_labels = weak_labels.cuda(args.gpu, non_blocking=True)         
         # compute output
-        output, target, output_proto, target_proto = model(im_q=images[0], im_k=images[1], cluster_result=cluster_result, index=index)
-        
-        # InfoNCE loss
+        output, target, feat_q, feat_k = model(im_q=images[0], im_k=images[1]) # feat_q, feat_k: NxC, NxC
+        # InfoNCE loss on 
         loss = criterion(output, target)  
         
-        # ProtoNCE loss
-        if output_proto is not None:
-            loss_proto = 0
-            for proto_out,proto_target in zip(output_proto, target_proto):
-                loss_proto += criterion(proto_out, proto_target)  
-                accp = accuracy(proto_out, proto_target)[0] 
-                acc_proto.update(accp[0], images[0].size(0))
-                
-            # average loss across all sets of prototypes
-            loss_proto /= len(args.num_cluster) 
-            loss += loss_proto   
-
+        if cluster_result is not None:
+            # print("SupCon on learnt clustering...")
+            # Cluster Version of supercon loss
+            # define features
+            features = torch.cat([feat_q.unsqueeze(1), feat_k.unsqueeze(1)], dim=1)
+            # define labels from cluster results
+            for cluster_i in cluster_result['im2cluster']:
+                labels = cluster_i[index]
+                # Use weak supercon to act as a filter to ensure the hard example is not inconsistent with weak labels
+                supercon_loss, hard_example_count = supcon_criterion(features, labels, weak_labels)
+                loss += supercon_loss
+                hardexamples.update(hard_example_count.item(), 1)
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0] 
         acc_inst.update(acc[0], images[0].size(0))
@@ -405,15 +444,14 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
 
         if i % args.print_freq == 0:
             progress.display(i)
-
-        # free the cache
-        del images
-        torch.cuda.empty_cache()
+        
 
             
 def compute_features(eval_loader, model, args):
     print('Computing features...')
     model.eval()
+    # free GPU for that batch
+    torch.cuda.empty_cache()
     features = torch.zeros(len(eval_loader.dataset),args.low_dim).cuda()
     for i, (images, index) in enumerate(tqdm(eval_loader)):
         with torch.no_grad():

@@ -83,13 +83,12 @@ parser.add_argument('--data-root', type=str, default="imagenet_unzip",
                     help='data root for ImageFolder')
 parser.add_argument('--val-root', type=str, default="validation_folder",
                     help="data root for validation ")
-
-
+parser.add_argument('--exp-dir', default='experiment_pcl', type=str,
+                    help='experiment directory')
 
 
 def main():
     args = parser.parse_args()
-    args.pretrained_folder = "".join(args.pretrained.split("/")[:-1])
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -110,7 +109,9 @@ def main():
 
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     
-    args.tb_folder = f'Linear_eval/{args.pretrained_folder.replace("/", "_")}/{args.id}_tensorboard'
+    args.pretrained_folder = "/".join(args.pretrained.split("/")[:-1])
+
+    args.tb_folder = f'{args.pretrained_folder}/Linear_eval/{args.id}/tensorboard'
     if not os.path.isdir(args.tb_folder):
         os.makedirs(args.tb_folder)
         
@@ -344,7 +345,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        # losses.update(loss.item(), images.size(0))
+        losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
 
@@ -360,6 +361,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.display(i)
         
+        del images
+        torch.cuda.empty_cache()
 
 
 def validate(val_loader, model, criterion, args, logger, epoch):
@@ -383,7 +386,7 @@ def validate(val_loader, model, criterion, args, logger, epoch):
             target = target.cuda(args.gpu, non_blocking=True)
 
             # compute output
-            output = model(images).detach()
+            output = model(images)
             loss = criterion(output, target)
 
             # measure accuracy and record loss

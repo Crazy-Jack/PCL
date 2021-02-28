@@ -2,22 +2,26 @@ import torch
 import torch.nn as nn
 from random import sample
 
-class MoCo(nn.Module):
+class GCL(nn.Module):
     """
-    Build a MoCo model with: a query encoder, a key encoder, and a queue
-    https://arxiv.org/abs/1911.05722
+    Build a GCL model
+    features:
+        having the distributed training ability
+        but don't use MOCO as backbone, but only SimCLR and unsupervised clustering
     """
-    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, distributed=True):
+    def __init__(self, base_encoder, dim=128, r=64, m=0.999, T=0.1, mlp=False, distributed=True, batch_size=256):
         """
         dim: feature dimension (default: 128)
-        r: queue size; number of negative samples/prototypes (default: 16384)
+        r: queue size; number of negative samples/prototypes of times comparing to batchsize (default: 16384)
         m: momentum for updating key encoder (default: 0.999)
         T: softmax temperature 
         mlp: whether to use mlp projection
         """
-        super(MoCo, self).__init__()
-
-        self.r = r
+        super(GCL, self).__init__()
+        
+        self.r = r * batch_size
+        # assert self.r < 16384
+        
         self.m = m
         self.T = T
 
@@ -38,8 +42,9 @@ class MoCo(nn.Module):
             param_k.requires_grad = False  # not update by gradient
 
         # create the queue
-        self.register_buffer("queue", torch.randn(dim, r))
+        self.register_buffer("queue", torch.randn(dim, self.r))
         self.queue = nn.functional.normalize(self.queue, dim=0)
+        print(f"Queue Size {self.queue.shape}")
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
@@ -62,6 +67,10 @@ class MoCo(nn.Module):
         assert self.r % batch_size == 0  # for simplicity
 
         # replace the keys at ptr (dequeue and enqueue)
+        # print(f"batch_size {batch_size}")
+        # print(f"ptr {ptr}")
+        # print(f"self.queue {self.queue.shape}")
+        # print(f"self.queue[:, ptr:ptr + batch_size] {self.queue[:, ptr:ptr + batch_size].shape}")
         self.queue[:, ptr:ptr + batch_size] = keys.T
         ptr = (ptr + batch_size) % self.r  # move pointer
 
@@ -178,38 +187,8 @@ class MoCo(nn.Module):
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
         
-        # prototypical contrast
-        if cluster_result is not None:  
-            proto_labels = []
-            proto_logits = []
-            for n, (im2cluster,prototypes,density) in enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density'])):
-                # get positive prototypes
-                pos_proto_id = im2cluster[index]
-                pos_prototypes = prototypes[pos_proto_id]    
-                
-                # sample negative prototypes
-                all_proto_id = [i for i in range(im2cluster.max())]       
-                neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
-                neg_proto_id = sample(neg_proto_id,self.r) #sample r negative prototypes 
-                neg_prototypes = prototypes[neg_proto_id]    
-
-                proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
-                
-                # compute prototypical logits
-                logits_proto = torch.mm(q,proto_selected.t())
-                
-                # targets for prototype assignment
-                labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda()
-                
-                # scaling temperatures for the selected prototypes
-                temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  
-                logits_proto /= temp_proto
-                
-                proto_labels.append(labels_proto)
-                proto_logits.append(logits_proto)
-            return logits, labels, proto_logits, proto_labels
-        else:
-            return logits, labels, None, None
+        return logits, labels, q, k
+        
 
 
 # utils
