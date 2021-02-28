@@ -2,6 +2,10 @@ from PIL import ImageFilter
 import random
 import torchvision.datasets as datasets
 from torch.utils.data import Dataset
+import numpy as np
+from PIL import Image 
+import os 
+
 
 class TwoCropsTransform:
     """Take two random crops of one image as the query and key."""
@@ -104,7 +108,7 @@ class DynamicLabelDataset(Dataset):
         '''
         return:
             img: PIL object
-            latent_lbl: scalar
+            index: scalar
             lbl: scalar
         '''
         img = Image.open(os.path.join(self.data_path, self.df.iloc[index]['path']))
@@ -120,4 +124,5 @@ class DynamicLabelDataset(Dataset):
         if self.transform:
             img = self.transform(img)
 
-        return img, lbl
+        return img, index, lbl
+

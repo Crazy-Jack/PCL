@@ -9,7 +9,6 @@ import warnings
 from tqdm import tqdm
 import numpy as np
 import faiss
-import datetime
 
 import torch
 import torch.nn as nn
@@ -27,7 +26,6 @@ import torchvision.models as models
 import pcl.loader
 import pcl.builder_cluster
 import pcl.SupConLoss
-from AutoEval import AutoEval
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -111,10 +109,6 @@ parser.add_argument('--data-root', type=str, default="imagenet_unzip",
                     help='data root for ImageFolder')
 parser.add_argument('--perform-cluster-epoch', type=int, default=2, 
                     help='number of epochs that perform the clustering')
-parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/script")
-parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
-parser.add_argument('--launch_eval_epoch', type=int, default=30)
-
 
 # parser.add_argument('--latent-class', type=str, default="hier_target100",
 #                     help="meta data folder for containing image")
@@ -150,7 +144,6 @@ def main():
         os.makedirs(args.exp_dir, exist_ok=True)
     
     ngpus_per_node = torch.cuda.device_count()
-
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
@@ -319,12 +312,6 @@ def main_worker(gpu, ngpus_per_node, args):
         eval_dataset, batch_size=args.batch_size, shuffle=False,
         sampler=eval_sampler, num_workers=args.workers, pin_memory=True)
     
-    eval_sids = []
-    if not args.resume:
-        print("CLearning the SID log...")
-        with open(os.path.join(args.exp_dir, "Eval_SID.txt"), "w") as f:
-            f.write(f"============\nInitial {datetime.datetime.now()}")
-        
     for epoch in range(args.start_epoch, args.epochs):
     
         cluster_result = None
@@ -350,13 +337,6 @@ def main_worker(gpu, ngpus_per_node, args):
                         print("\nSaving cluster results...\n")
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
-                        if (epoch+1) % args.launch_eval_epoch == 0:
-                            # auto eval 
-                            eval_script = os.path.join(args.script_root, args.eval_script_filename)
-                            autoE = AutoEval(args.exp_dir, eval_script)
-                            sid = autoE.eval(epoch)
-                            with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
-                                f.write(sid+"\n")
                 dist.barrier()  
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():

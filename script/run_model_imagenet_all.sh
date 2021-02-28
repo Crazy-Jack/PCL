@@ -22,7 +22,7 @@ python3 ../main_pcl.py /work/tianqinl/imagenet/ \
 --warmup-epoch $1 \
 --save-epoch 2 \
 --workers 10 \
-# --resume /results/tianqinl/train_related/imagenet/pcl_all/checkpoint_0001.pth.tar
+--resume /results/tianqinl/train_related/imagenet/pcl_imagenet_all_bz_256/checkpoint_0019.pth.tar
 
 
 ### LOG ###
@@ -77,3 +77,7 @@ python3 ../main_pcl.py /work/tianqinl/imagenet/ \
 #  
 ################
 # also 168500
+
+# Document feb 21
+# running from 20 epochs 
+# but due to the limitation, only can run 128 batchsize on gpu_long2
