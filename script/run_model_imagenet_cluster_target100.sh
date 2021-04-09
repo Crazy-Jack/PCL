@@ -26,6 +26,7 @@ python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/imagenet/ \
 --pcl-r 128 \
 --num-cluster $1 \
 --eval-script-filename run_linear_eval_target100_nodist.sh \
+# --resume $2 \
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \
 

@@ -16,7 +16,7 @@ python3 ../main_moco_cluster.py /work/tianqinl/imagenet/ \
 --batch-size 128 \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
---dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
+--dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size 1 --rank 0 \
 --exp-dir /results/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_bz128$1 \
 --warmup-epoch 10 \
 --data-root imagenet_unzip \

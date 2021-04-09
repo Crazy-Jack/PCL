@@ -5,6 +5,7 @@ import random
 import shutil
 import time
 import warnings
+import math
 
 import torch
 import torch.nn as nn
@@ -83,13 +84,15 @@ parser.add_argument('--data-root', type=str, default="imagenet_unzip",
                     help='data root for ImageFolder')
 parser.add_argument('--val-root', type=str, default="validation_folder",
                     help="data root for validation ")
+parser.add_argument('--cos', action='store_true',
+                    help='use cosine lr schedule')
 
 
 
 
 def main():
     args = parser.parse_args()
-    args.pretrained_folder = "".join(args.pretrained.split("/")[:-1])
+    args.pretrained_folder = "/".join(args.pretrained.split("/")[:-1])
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -110,7 +113,7 @@ def main():
 
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     
-    args.tb_folder = f'Linear_eval/{args.pretrained_folder.replace("/", "_")}/{args.id}_tensorboard'
+    args.tb_folder = f'{args.pretrained_folder}/Linear_eval/{args.id}_tensorboard'
     if not os.path.isdir(args.tb_folder):
         os.makedirs(args.tb_folder)
         
@@ -270,7 +273,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+        num_workers=args.workers, pin_memory=False, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
@@ -280,7 +283,7 @@ def main_worker(gpu, ngpus_per_node, args):
             normalize,
         ])),
         batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+        num_workers=args.workers, pin_memory=False)
 
     if args.evaluate:
         validate(val_loader, model, criterion, args)
@@ -291,6 +294,7 @@ def main_worker(gpu, ngpus_per_node, args):
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
+        print(f"args.gpu {args.gpu}")
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
 
@@ -304,7 +308,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-            })
+            }, filename=os.path.join(args.tb_folder, 'checkpoint.pth.tar'))
             if epoch == args.start_epoch:
                 sanity_check(model.state_dict(), args.pretrained)
 
@@ -332,7 +336,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
         # measure data loading time
-        data_time.update(time.time() - end)
+        # data_time.update(time.time() - end)
 
         if args.gpu is not None:
             images = images.cuda(args.gpu, non_blocking=True)
@@ -479,10 +483,17 @@ class ProgressMeter(object):
 def adjust_learning_rate(optimizer, epoch, args):
     """Decay the learning rate based on schedule"""
     lr = args.lr
-    for milestone in args.schedule:
-        lr *= 0.1 if epoch >= milestone else 1.
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+    log_str = ""
+    if args.cos:  # cosine lr schedule
+        log_str += f"Use cosine decay from {args.lr}; "
+        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
+    else:  # stepwise lr schedule
+        for milestone in args.schedule:
+            lr *= 0.1 if epoch >= milestone else 1.
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+    log_str += f"Learning rate for epoch {epoch}: {lr}"
+    print(log_str)
 
 
 def accuracy(output, target, topk=(1,)):

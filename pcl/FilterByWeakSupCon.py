@@ -1,6 +1,6 @@
 """Filter the clustering results by weak supervision signals"""
 
-import torch 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -12,7 +12,7 @@ class SupConFilterByWeakLabels(nn.Module):
         self.temperature = temperature
         self.base_temperature = base_temperature
         self.threshold = threshold
-    
+
     @torch.no_grad()
     def getLabelTileMask(self, labels, anchor_count, contrast_count, device):
         """input label indexs of a batch, return [bz, bz] binary labels
@@ -35,7 +35,7 @@ class SupConFilterByWeakLabels(nn.Module):
         )
         mask = mask * logits_mask
         return mask, logits_mask
-    
+
     @torch.no_grad()
     def getHardExample(self, similarity, threshold):
         """from similarity matrix to determine which one is the hard example and build mask for it
@@ -48,9 +48,9 @@ class SupConFilterByWeakLabels(nn.Module):
                   else torch.device('cpu'))
         hard_example_mask = (similarity < threshold) * (torch.FloatTensor([1.]).to(device))
         # print("hard example mask")
-        print(hard_example_mask)
+        # print(hard_example_mask)
         # print("similarity")
-        print(similarity)
+        # print(similarity)
         return hard_example_mask
 
     @torch.no_grad()
@@ -62,18 +62,18 @@ class SupConFilterByWeakLabels(nn.Module):
         elif priority == "cluster":
             priority_mask = cluster_mask
             normal_mask = weak_mask
-        
+
         # logical operation to ensure priority mask
         priority_mask = hard_example_mask * priority_mask
         normal_mask = (torch.FloatTensor([1.0]).to(device) - hard_example_mask) * normal_mask
 
         return priority_mask + normal_mask
-        
+
 
     def forward(self, features, cluster_labels, weak_labels, priority="supervised"):
         """input labels from clustering and labels from weak supervision, and features, \
            make sure the features that have dot product close to zero not miss labeled by the clustering results
-        
+
         param:
             features: hidden vector of shape [bsz, n_views, ...]
             cluster_labels: [bz,]
@@ -82,7 +82,7 @@ class SupConFilterByWeakLabels(nn.Module):
         device = (torch.device('cuda')
                   if features.is_cuda
                   else torch.device('cpu'))
-        
+
         contrast_count = features.shape[1]
         batch_size = features.shape[0]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
@@ -103,7 +103,7 @@ class SupConFilterByWeakLabels(nn.Module):
         # Compute Clustering Mask
         cluster_mask, logits_mask = self.getLabelTileMask(cluster_labels, anchor_count, contrast_count, device)
         # print("cluster mask")
-        print(cluster_mask)
+        # print(cluster_mask)
         weak_mask, _ = self.getLabelTileMask(weak_labels, anchor_count, contrast_count, device)
         # print("weak mask")
         # print(weak_mask)
@@ -131,7 +131,7 @@ class SupConFilterByWeakLabels(nn.Module):
 
 
 
-        
+
 
 
 if __name__ == "__main__":
@@ -146,5 +146,5 @@ if __name__ == "__main__":
 
 
 
-        
+
 

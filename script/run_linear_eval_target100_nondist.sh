@@ -10,7 +10,7 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-python3.6 ../eval_cls_imagenet_nondist.py /work/tianqinl/imagenet/ \
+python3.6 /home/tianqinl/PCL/eval_cls_imagenet_nondist.py /work/tianqinl/imagenet/ \
 --pretrained $1/checkpoint_$2.pth.tar \
 -a resnet50 \
 --lr 5 \
