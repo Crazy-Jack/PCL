@@ -139,12 +139,19 @@ def main():
     
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
+        print("multiprocessing_distributed")
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+        try:
+            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+            print("no error?")
+        except Exception as e:
+            print(f"Error: {e}")
+
+        print("Break??")
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
