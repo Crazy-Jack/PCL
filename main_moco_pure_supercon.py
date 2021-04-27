@@ -230,7 +230,7 @@ def main_worker(gpu, ngpus_per_node, args):
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
-    
+
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):

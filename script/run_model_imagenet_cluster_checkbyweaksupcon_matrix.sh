@@ -18,10 +18,10 @@ python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /scratch/tianqinl/im
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_corrected_by_weaksupcon/gran_$1/bz_256_num_cluster_$2 \
+--exp-dir /projects/rsalakhugroup/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_corrected_by_weaksupcon/gran_$1/bz_256_num_cluster_$2 \
 --warmup-epoch 10 \
 --data-root imagenet_unzip \
---save-epoch 1 \
+--save-epoch 5 \
 --perform-cluster-epoch 1 \
 --workers 10 \
 --pcl-r 128 \
