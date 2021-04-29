@@ -107,7 +107,7 @@ class SupConFilterByWeakLabels(nn.Module):
         # print("Hrad")
         # print(hard_example_mask)
         ## mask operation to filter the one with higher priority
-        mask = self.correct_cluster(hard_example_mask, cluster_mask, weak_mask, device)
+        mask = self.correct_clustering(hard_example_mask, cluster_mask, weak_mask, device)
         # print("Final mask")
         # print(mask)
         # exp logits and log prob
