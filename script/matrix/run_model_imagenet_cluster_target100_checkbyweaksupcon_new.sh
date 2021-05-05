@@ -16,8 +16,8 @@ python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak_new.py /projects/rsalak
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /projects/rsalakhugroup/tianqinl/train_related/imagenet/target_100/moco_cluster_corrected_by_weaksupcon_new/bz_128_num_cluster_$2 \
---warmup-epoch 10 \
+--exp-dir /projects/rsalakhugroup/tianqinl/train_related/imagenet/target_100/moco_cluster_corrected_by_weaksupcon_new/bz_256_num_cluster_$2 \
+--warmup-epoch 20 \
 --data-root train_100 \
 --save-epoch 5 \
 --perform-cluster-epoch 1 \
@@ -29,7 +29,8 @@ python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak_new.py /projects/rsalak
 --latent-class target_class_100 \
 --meta-data-train meta_file_train_target100.csv \
 --gran-lvl $1 \
---epochs 100 \
+--epochs 200 \
+#--resume $3 \
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \
 

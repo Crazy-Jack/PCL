@@ -84,6 +84,7 @@ class SupConFilterByWeakLabels(nn.Module):
         anchor_count = contrast_count
 
         # Compute Dot Product
+        # print(f"torch.matmul(anchor_feature, contrast_feature.T) {torch.matmul(anchor_feature, contrast_feature.T)}")
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
             self.temperature)
@@ -103,6 +104,7 @@ class SupConFilterByWeakLabels(nn.Module):
 
         # filters
         ## hard example mask
+        # print(f"logits: {(logits)}")
         hard_example_mask = self.getHardExample((logits * self.temperature).abs(), self.threshold) # [2bz, 2bz], times temp to get original similarity
         # print("Hrad")
         # print(hard_example_mask)
@@ -120,7 +122,7 @@ class SupConFilterByWeakLabels(nn.Module):
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size).mean()
         # print(f"loss {loss.item()}")
-        return loss, (hard_example_mask * cluster_mask).sum()
+        return loss, (hard_example_mask * cluster_mask).sum(), hard_example_mask.sum(), cluster_mask.sum()
 
 
 
