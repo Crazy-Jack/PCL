@@ -3,8 +3,8 @@ import random
 import torchvision.datasets as datasets
 from torch.utils.data import Dataset
 import numpy as np
-from PIL import Image 
-import os 
+from PIL import Image
+import os
 
 
 class TwoCropsTransform:
@@ -29,14 +29,14 @@ class GaussianBlur(object):
         sigma = random.uniform(self.sigma[0], self.sigma[1])
         x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
         return x
-    
+
 
 class ImageFolderInstanceClass(datasets.ImageFolder):
     def __getitem__(self, index):
         path, target = self.samples[index]
         sample = self.loader(path)
         if self.transform is not None:
-            sample = self.transform(sample)           
+            sample = self.transform(sample)
         return sample, index, target
 
 class ImageFolderInstance(datasets.ImageFolder):
@@ -44,7 +44,7 @@ class ImageFolderInstance(datasets.ImageFolder):
         path, target = self.samples[index]
         sample = self.loader(path)
         if self.transform is not None:
-            sample = self.transform(sample)           
+            sample = self.transform(sample)
         return sample, index
 
 
@@ -56,9 +56,9 @@ class DynamicLabelDataset(Dataset):
     def __init__(self, df, data_path, gran_lvl, transform=None):
         """
         note: clean version of dynamic label dataset
-        param: 
+        param:
             df: a panda DataFrame which contains the path of the imagenet data path and label
-            data_path: root name. 
+            data_path: root name.
                 Consider the data is stored in xxxx/imagenet_unzip/n01582220/n01582220_4784.JPEG
                 data_path should be 'xxxx/imagenet_unzip/'
                 each row of df['path'] will be 'n01582220/n01582220_4784.JPEG'
@@ -66,7 +66,7 @@ class DynamicLabelDataset(Dataset):
             gran_lvl: choose from ['class', 'simclr', f'label_gran_{gran_lvl}'], they should be in the header of df
             transform: instance of torchvision.transform
         """
-        
+
         super(DynamicLabelDataset, self).__init__()
         self.data_path = data_path
         self.gran_lvl = gran_lvl
@@ -77,7 +77,7 @@ class DynamicLabelDataset(Dataset):
             self.gran_lvl_label_name = 'path'
         else:
             self.gran_lvl_label_name = 'label_gran_{}'.format(gran_lvl)
-        
+
         # clean up df
         if -1 in df.index:
             df = df.drop([-1])
@@ -85,16 +85,18 @@ class DynamicLabelDataset(Dataset):
         if '-1' in df.index:
             df = df.drop(['-1'])
             print("drop '-1' row")
-        print(df)   
+        print(df)
 
-        # store df 
+        # store df
         self.df = df
         # store transform
         self.transform = transform
 
         # processing latent class to continuous unique mapping
         unique_class = np.unique(self.df[self.gran_lvl_label_name].to_numpy())
+        print(f"unique class {unique_class}")
         # check if the unique_class have any discontiouity
+        print(f"unique class {len(unique_class)}")
         assert len(unique_class) == max(unique_class) + 1, f"max unique_class should be len(unique_class)-1={len(unique_class)-1} but get {max(unique_class)}"
         for i in range(len(unique_class)):
             assert i in unique_class, f"{i} not in unique_class: {unique_class}"

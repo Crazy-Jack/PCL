@@ -12,7 +12,7 @@ ls /results/tianqinl
 
 echo "Start at -- $(date)";
 
-python /home/tianqinl/PCL/eval_cls_imagenet.py /work/tianqinl/imagenet/ \
+python /home/tianqinl/PCL/eval_cls_imagenet.py /scratch/tianqinl/imagenet/ \
 --pretrained $1/checkpoint_$2.pth.tar \
 -a resnet50 \
 --lr 0.3 --cos \

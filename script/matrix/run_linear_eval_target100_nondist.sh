@@ -14,7 +14,7 @@ python3.6 /home/tianqinl/PCL/eval_cls_imagenet_nondist.py /projects/rsalakhugrou
 --pretrained $1/checkpoint_$2.pth.tar \
 -a resnet50 \
 --lr 5 \
---batch-size 1280 \
+--batch-size 1024 \
 --id epoch_$2 \
 --data-root train_100 \
 --val-root val_100 \
