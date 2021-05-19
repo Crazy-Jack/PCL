@@ -114,6 +114,7 @@ parser.add_argument('--perform-cluster-epoch', type=int, default=2,
 parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/script")
 parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
 parser.add_argument('--launch_eval_epoch', type=int, default=30)
+parser.add_argument('--dataset', type=str, default="imagenet100")
 
 
 # parser.add_argument('--latent-class', type=str, default="hier_target100",
@@ -252,8 +253,23 @@ def main_worker(gpu, ngpus_per_node, args):
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
     # latent_class_dir = os.path.join(args.data, args.latent_class)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    if args.dataset == 'imagenet100':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+    elif args.dataset == 'CUB':
+        normalize = transforms.Normalize(mean=[0.4863, 0.4999, 0.4312],
+                                        std=[0.2070, 0.2018, 0.2428])
+    elif args.dataset == 'Wider':
+        normalize = transforms.Normalize(mean=[0.4772, 0.4405, 0.4100],
+                                        std=[0.2960, 0.2876, 0.2935])
+    elif args.dataset == 'UT-zappos':
+        normalize = transforms.Normalize(mean=[0.8342, 0.8142, 0.8081],
+                                        std=[0.2804, 0.3014, 0.3072])
+    else:
+        raise NotImplementedError
+    
+                                
+
     
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
@@ -350,13 +366,13 @@ def main_worker(gpu, ngpus_per_node, args):
                         print("\nSaving cluster results...\n")
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
-                        if (epoch+1) % args.launch_eval_epoch == 0:
-                            # auto eval 
-                            eval_script = os.path.join(args.script_root, args.eval_script_filename)
-                            autoE = AutoEval(args.exp_dir, eval_script)
-                            sid = autoE.eval(epoch)
-                            with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
-                                f.write(sid+"\n")
+                        # if (epoch+1) % args.launch_eval_epoch == 0:
+                        #     # auto eval 
+                        #     eval_script = os.path.join(args.script_root, args.eval_script_filename)
+                        #     autoE = AutoEval(args.exp_dir, eval_script)
+                        #     sid = autoE.eval(epoch)
+                        #     with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
+                        #         f.write(sid+"\n")
                 dist.barrier()  
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():

@@ -17,7 +17,7 @@ python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/imagenet/ \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/imagenet/target_100/moco_cluster_bz_128_$1 \
+--exp-dir /results/tianqinl/train_related/imagenet/target_100/moco_cluster_bz_128_$1_trail2 \
 --warmup-epoch 10 \
 --data-root train_100 \
 --save-epoch 5 \
