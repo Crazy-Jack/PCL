@@ -325,9 +325,10 @@ def main_worker(gpu, ngpus_per_node, args):
         with open(os.path.join(args.exp_dir, "Eval_SID.txt"), "w") as f:
             f.write(f"============\nInitial {datetime.datetime.now()}")
 
+    cluster_result = None
     for epoch in range(args.start_epoch, args.epochs):
 
-        cluster_result = None
+        
         if epoch>=args.warmup_epoch:
 
             if (epoch+1) % args.perform_cluster_epoch == 0:
