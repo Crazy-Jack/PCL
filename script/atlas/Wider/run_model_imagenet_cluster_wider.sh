@@ -10,17 +10,17 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/CUB_200_2011/ \
+python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/Wider/Image \
 -a resnet50 \
 --lr 0.03 \
 --batch-size 128 \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/Cl-infonce/CUB/unsupervised/num_cluster_$1+lr0.03+bz128+trail1 \
+--exp-dir /results/tianqinl/train_related/Cl-infonce/Wider/unsupervised/num_cluster_$1+lr0.03+bz128+trail1 \
 --warmup-epoch 100 \
---dataset CUB \
---data-root flat-train \
+--data-root train \
+--dataset Wider \
 --save-epoch 100 \
 --perform-cluster-epoch 1 \
 --workers 10 \

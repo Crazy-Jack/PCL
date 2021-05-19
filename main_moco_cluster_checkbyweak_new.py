@@ -1,7 +1,6 @@
 import argparse
 import builtins
 import math
-import sys
 import os
 import random
 import shutil
@@ -29,8 +28,7 @@ import pandas as pd
 import pcl.loader
 import pcl.builder_cluster
 import pcl.SupConLoss
-from pcl.logger import txt_logger
-from pcl.FilterByWeakSupCon import SupConFilterByWeakLabels
+from pcl.FilterByWeakSupCon_new import SupConFilterByWeakLabels
 from AutoEval import AutoEval
 
 model_names = sorted(name for name in models.__dict__
@@ -161,18 +159,14 @@ def main():
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, sys.argv))
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args, sys.argv)
+        main_worker(args.gpu, ngpus_per_node, args)
 
 
-def main_worker(gpu, ngpus_per_node, args, argv):
+def main_worker(gpu, ngpus_per_node, args):
     args.gpu = gpu
-
-    if args.gpu == 0:
-        # logging
-        logger = txt_logger(args.exp_dir, args, 'python ' + ' '.join(argv))
 
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
@@ -197,6 +191,7 @@ def main_worker(gpu, ngpus_per_node, args, argv):
     model = pcl.builder_cluster.MoCo(
         models.__dict__[args.arch],
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
+    print(model)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -378,10 +373,7 @@ def main_worker(gpu, ngpus_per_node, args, argv):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        loss_item = train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
-
-        if args.gpu == 0:
-            logger.log_value(epoch, ('loss', loss_item))
+        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -399,11 +391,13 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
     losses = AverageMeter('Loss', ':.4e')
     acc_inst = AverageMeter('Acc@Inst', ':6.2f')
     acc_proto = AverageMeter('Acc@Proto', ':6.2f')
-    hardexamples = AverageMeter('HardExample', ':6.2f')
+    hardexamples = AverageMeter('Hard cluster examples', ':6.2f')
+    hard_cluster = AverageMeter('hard examples', ':6.2f')
+    clusters = AverageMeter('clustering mask', ':6.2f')
 
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, acc_inst, acc_proto, hardexamples],
+        [batch_time, losses, acc_inst, hardexamples, hard_cluster, clusters],
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
@@ -434,9 +428,11 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
             for cluster_i in cluster_result['im2cluster']:
                 labels = cluster_i[index]
                 # Use weak supercon to act as a filter to ensure the hard example is not inconsistent with weak labels
-                supercon_loss, hard_example_count = supcon_criterion(features, labels, weak_labels)
+                supercon_loss, hard_cluster_count, hard_count, cluster_count = supcon_criterion(features, labels, weak_labels)
                 loss += supercon_loss
-                hardexamples.update(hard_example_count.item(), 1)
+                hardexamples.update(hard_cluster_count.item(),1)
+                hard_cluster.update(hard_count.item(),1)
+                clusters.update(cluster_count.item(),1)
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0]
         acc_inst.update(acc[0], images[0].size(0))
@@ -452,9 +448,6 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
 
         if i % args.print_freq == 0:
             progress.display(i)
-
-    return losses.avg
-
 
 
 

@@ -1,7 +1,6 @@
 import argparse
 import builtins
 import math
-import sys
 import os
 import random
 import shutil
@@ -29,8 +28,7 @@ import pandas as pd
 import pcl.loader
 import pcl.builder_cluster
 import pcl.SupConLoss
-from pcl.logger import txt_logger
-from pcl.FilterByWeakSupCon import SupConFilterByWeakLabels
+from pcl.FilterByCluster import SupConFilterByCluster
 from AutoEval import AutoEval
 
 model_names = sorted(name for name in models.__dict__
@@ -117,7 +115,7 @@ parser.add_argument('--perform-cluster-epoch', type=int, default=2,
                     help='number of epochs that perform the clustering')
 parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/script")
 parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
-parser.add_argument('--launch-eval-epoch', type=int, default=30)
+parser.add_argument('--launch-eval-epoch', type=int, default=1000)
 parser.add_argument('--threshold', type=float, default=0.1, help="threshold for determine the hard example")
 
 parser.add_argument('--latent-class', type=str, default="target_class_100",
@@ -161,18 +159,14 @@ def main():
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, sys.argv))
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args, sys.argv)
+        main_worker(args.gpu, ngpus_per_node, args)
 
 
-def main_worker(gpu, ngpus_per_node, args, argv):
+def main_worker(gpu, ngpus_per_node, args):
     args.gpu = gpu
-
-    if args.gpu == 0:
-        # logging
-        logger = txt_logger(args.exp_dir, args, 'python ' + ' '.join(argv))
 
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
@@ -197,6 +191,7 @@ def main_worker(gpu, ngpus_per_node, args, argv):
     model = pcl.builder_cluster.MoCo(
         models.__dict__[args.arch],
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
+    print(model)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -229,7 +224,7 @@ def main_worker(gpu, ngpus_per_node, args, argv):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
     # define supercon loss
-    supcon_criterion = SupConFilterByWeakLabels(temperature=args.temperature, threshold=args.threshold)
+    supcon_criterion = SupConFilterByCluster(temperature=args.temperature, threshold=args.threshold)
 
 
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
@@ -378,10 +373,7 @@ def main_worker(gpu, ngpus_per_node, args, argv):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        loss_item = train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
-
-        if args.gpu == 0:
-            logger.log_value(epoch, ('loss', loss_item))
+        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -452,9 +444,6 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
 
         if i % args.print_freq == 0:
             progress.display(i)
-
-    return losses.avg
-
 
 
 

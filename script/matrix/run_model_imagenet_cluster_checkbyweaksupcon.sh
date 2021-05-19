@@ -1,42 +1,35 @@
 #!/bin/bash
 #
 #SBATCH --gres=gpu:4  # Use GPU number
-#SBATCH --mem 100gb    # Memory
-#SBATCH -p gpu_long
-#SBATCH -t 10-00:00:00    # time
-#SBATCH -c 32
-#SBATCH --exclude compute-2-9
-#SBATCH -o /results/tianqinl/train_related/log/sbatch_log/%j.out
-
-bz=1024;
-epochs=50;
-lr=0.4
-threshold=0.1
+#SBATCH --mem 90gb    # Memory
+#SBATCH -p russ_reserved
+#SBATCH -t 3-00:00:00    # time
+#SBATCH -c 30
+#SBATCH --exclude matrix-1-12
+#SBATCH -o /projects/rsalakhugroup/tianqinl/train_related/sbatch_log/%j.out
 
 
-threshold=0.05;
 
-python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /work/tianqinl/imagenet/ \
+python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /projects/rsalakhugroup/peiyuanl/imagenet \
 -a resnet50 \
---lr 0.3 \
+--lr 0.03 \
 --batch-size 256 \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_corrected_by_weaksupcon/gran_$1/bz_256_num_cluster_$2_thr_$threshold \
+--exp-dir /projects/rsalakhugroup/tianqinl/train_related/imagenet/full_imagenet/moco_cluster_corrected_by_weaksupcon/gran_$1/bz_128_num_cluster_$2 \
 --warmup-epoch 10 \
 --data-root imagenet_unzip \
 --save-epoch 5 \
 --perform-cluster-epoch 1 \
---workers 10 \
+--workers 16 \
 --pcl-r 128 \
 --num-cluster $2 \
---threshold $threshold \
+--eval-script-filename run_linear_eval_target100.sh \
+--launch-eval-epoch 300 \
 --latent-class imagenet_all \
---threshold $threshold \
 --meta-data-train meta_data_train.csv \
 --gran-lvl $1 \
-#--resume $3 \
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \
 
