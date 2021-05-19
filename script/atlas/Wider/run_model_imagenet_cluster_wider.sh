@@ -27,6 +27,7 @@ python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/Wider/Image \
 --pcl-r 128 \
 --num-cluster $1 \
 --epochs 1000 \
+--resume /results/tianqinl/train_related/Cl-infonce/Wider/unsupervised/num_cluster_1000+lr0.03+bz128+trail1/checkpoint_0499.pth.tar \
 # --resume $2 \
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \

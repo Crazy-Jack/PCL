@@ -24,7 +24,7 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-from mymodels import resnet_big 
+
 import pcl.loader
 import pcl.builder_cluster
 import pcl.SupConLoss
@@ -117,8 +117,6 @@ parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/scrip
 parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
 parser.add_argument('--launch_eval_epoch', type=int, default=30)
 parser.add_argument('--dataset', type=str, default="imagenet100")
-parser.add_argument('--image_size', type=int, default=224)
-
 
 
 # parser.add_argument('--latent-class', type=str, default="hier_target100",
@@ -191,15 +189,8 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    if args.dataset == 'UT-zappos':
-        print("Using costimized resnet")
-        basemodel = resnet_big.utzap_resnet50()
-    else:
-        print("Using normal resnet")
-        basemodel = models.__dict__[args.arch]
-    
     model = pcl.builder_cluster.MoCo(
-        basemodel,
+        models.__dict__[args.arch],
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
     print(model)
 
@@ -285,7 +276,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
         augmentation = [
-            transforms.RandomResizedCrop(args.image_size, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
             transforms.RandomApply([
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
             ], p=0.8),
@@ -298,7 +289,7 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
         augmentation = [
-            transforms.RandomResizedCrop(args.image_size, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
             transforms.RandomGrayscale(p=0.2),
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
             transforms.RandomHorizontalFlip(),
@@ -307,10 +298,9 @@ def main_worker(gpu, ngpus_per_node, args):
         ]
 
     # center-crop augmentation
-    size = 2 ** (np.ceil(np.log2(args.image_size)))
     eval_augmentation = transforms.Compose([
-        transforms.Resize((size, size)),
-        transforms.CenterCrop(args.image_size),
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
         transforms.ToTensor(),
         normalize
         ])

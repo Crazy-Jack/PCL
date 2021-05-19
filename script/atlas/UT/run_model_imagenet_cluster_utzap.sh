@@ -10,24 +10,24 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/CUB_200_2011/ \
+python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/ut-zap50K-processed \
 -a resnet50 \
 --lr 0.03 \
---batch-size 128 \
+--batch-size 152 \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/Cl-infonce/CUB/unsupervised/num_cluster_$1+lr0.03+bz128+nce_m0.8+trail1 \
+--exp-dir /results/tianqinl/train_related/Cl-infonce/UT-zappos/unsupervised/num_cluster_$1+lr0.03+bz128+trail1 \
 --warmup-epoch 100 \
---dataset CUB \
---data-root flat-train \
+--dataset UT-zappos \
+--data-root utzap-sub-flat-train \
 --save-epoch 100 \
 --perform-cluster-epoch 1 \
---moco-m 0.8 \
 --workers 10 \
 --pcl-r 128 \
 --num-cluster $1 \
 --epochs 1000 \
+--image_size 32 \
 # --resume $2 \
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \
