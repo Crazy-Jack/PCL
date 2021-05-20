@@ -234,27 +234,27 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     if args.gpu == 0:
-                    features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice
-                    features = features.numpy()
-                    cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
-                    
-                    # save the clustering result
-                    if (epoch+1) % args.save_epoch == 0:
-                        print("\nSaving cluster results...\n")
-                        torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
-                
-                        # if (epoch+1) % args.launch_eval_epoch == 0:
-                        #     # auto eval 
-                        #     eval_script = os.path.join(args.script_root, args.eval_script_filename)
-                        #     autoE = AutoEval(args.exp_dir, eval_script)
-                        #     sid = autoE.eval(epoch)
-                        #     with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
-                        #         f.write(sid+"\n")
-                dist.barrier()  
-                # broadcast clustering result
-                for k, data_list in cluster_result.items():
-                    for data_tensor in data_list:
-                        dist.broadcast(data_tensor, 0, async_op=False)
-                
-                model.mem_labels = cluster_result['memory_lbl'].clone()
+        features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice
+        features = features.numpy()
+        cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
+        
+        # save the clustering result
+        if (epoch+1) % args.save_epoch == 0:
+            print("\nSaving cluster results...\n")
+            torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
+    
+            # if (epoch+1) % args.launch_eval_epoch == 0:
+            #     # auto eval 
+            #     eval_script = os.path.join(args.script_root, args.eval_script_filename)
+            #     autoE = AutoEval(args.exp_dir, eval_script)
+            #     sid = autoE.eval(epoch)
+            #     with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
+            #         f.write(sid+"\n")
+    dist.barrier()  
+    # broadcast clustering result
+    for k, data_list in cluster_result.items():
+        for data_tensor in data_list:
+            dist.broadcast(data_tensor, 0, async_op=False)
+    
+    model.mem_labels = cluster_result['memory_lbl'].clone()
 

@@ -44,9 +44,7 @@ class MoCo(nn.Module):
         self.queue = nn.functional.normalize(self.queue, dim=0)
         print(f"Queue Size {self.queue.shape}")
 
-        # register labels in memory
-        self.register_buffer('mem_labels', torch.randint(2500, size=(self.r,), dtype=torch.long))
-
+        
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
         # cross entropy for warmup
@@ -138,7 +136,7 @@ class MoCo(nn.Module):
 
         return x_gather[idx_this]
 
-    def forward(self, im_q, im_k=None, is_eval=False, cluster_labels=None):
+    def forward(self, im_q, im_k=None, is_eval=False, cluster_labels=None, buffer_labels=None):
         """
         Input:
             im_q: a batch of query images
@@ -185,13 +183,14 @@ class MoCo(nn.Module):
             logit = torch.div(logit, self.T).contiguous()
             
             # labels
+            assert queue.shape[1] == buffer_labels.shape[0], f"{queue.shape[1]} not equal to {buffer_labels.shape[0]}"
             local_cluster_mask = torch.eq(cluster_labels.view(-1, 1), cluster_labels) # [bz_local, bz_local]
-            memo_mask = torch.eq(cluster_labels.view(-1, 1), self.mem_labels.clone().detach()) # [bz_local, mem_size]
+            memo_mask = torch.eq(cluster_labels.view(-1, 1), buffer_labels.clone()) # [bz_local, mem_size]
             labels = torch.cat([local_cluster_mask, memo_mask], axis=1) # [bz_local, bz_local + mem_size]
 
             # loss
-            exp_logits = torch.exp(logits)
-            log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+            exp_logits = torch.exp(logit)
+            log_prob = logit - torch.log(exp_logits.sum(1, keepdim=True))
             # compute mean
             mean_log_prob_loss = - (log_prob * labels).sum(1) / labels.sum(1)
             loss = mean_log_prob_loss.mean()

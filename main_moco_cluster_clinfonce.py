@@ -365,37 +365,42 @@ def main_worker(gpu, ngpus_per_node, args):
         if epoch>=args.warmup_epoch:
 
             if (epoch+1) % args.perform_cluster_epoch == 0:
+                # print(model.module.queue)
                 # compute momentum features for center-cropped images
                 features = compute_features(eval_loader, model, args)
-
+                # print(f"features {features.shape}")
                 # placeholder for clustering result
                 cluster_result = {'im2cluster':[],'centroids':[],'density':[]}
                 for num_cluster in args.num_cluster:
-                    cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
+                    cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset) + model.module.r,dtype=torch.long).cuda())
                     cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
                     cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda())
 
                 if args.gpu == 0:
                     features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice
+                    features = torch.cat([features, model.module.queue.clone().detach().T.cpu()], axis=0) # [num_img + queue_size, dim]
                     features = features.numpy()
-                    cluster_result = run_kmeans(features,args,model.r)  #run kmeans clustering on master node
-                    
+                    cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
+                    # print("check1")
                     # save the clustering result
                     if (epoch+1) % args.save_epoch == 0:
                         print("\nSaving cluster results...\n")
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
-                
-                        
+                    # model.module.mem_labels.copy_(cluster_result['memory_lbl'][0])
+                    # model.broadcast_buffers()
+
+                # print("check2")
                 dist.barrier()  
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():
                     for data_tensor in data_list:
                         dist.broadcast(data_tensor, 0, async_op=False)
                 
-                model.mem_labels = cluster_result['memory_lbl'].clone()
-                print(f"save model for inspection from node {arg.gpu}")
-                torch.save(model.mem_labels, os.path.join(args.exp_dir, 'memory_gpu_%d_epoch_%d'%(args.gpu, epoch)))  
-
+                
+                # print(f"save model for inspection from node {args.gpu}")
+                # print(f"model.module.mem_labels on gpu {args.gpu} : {model.module.mem_labels} ")
+                # torch.save(model.module.mem_labels, os.path.join(args.exp_dir, 'memory_gpu_%d_epoch_%d'%(args.gpu, epoch)))  
+                # dist.barrier() 
 
 
         if args.distributed:
@@ -450,10 +455,10 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
         # prepare for contrast moco
         if cluster_result is not None:
             assert len(cluster_result['im2cluster']) == 1, f"only one level of clustering is supported for now"
-            cluster_labels = cluster_result['im2cluster'][0][index] # cluster labels for the local
-            
+            cluster_labels = cluster_result['im2cluster'][0][:-model.module.r][index] # cluster labels for the local
+            mem_lbl = cluster_result['im2cluster'][0][-model.module.r:]
             # compute output
-            loss = model(im_q=images[0], im_k=images[1], is_eval=False, cluster_labels=cluster_labels) # feat_q, feat_k: NxC, NxC
+            loss = model(im_q=images[0], im_k=images[1], is_eval=False, cluster_labels=cluster_labels, buffer_labels=mem_lbl) # feat_q, feat_k: NxC, NxC
         
         else:
             # warmup
@@ -487,14 +492,14 @@ def compute_features(eval_loader, model, args):
             feat = model(images,is_eval=True)
             features[index] = feat
     
-    features = torch.cat([features, model.queue.clone().detach().T], axis=0) # [num_img + queue_size, dim]
+    # features = torch.cat([features, model.module.queue.clone().detach().T], axis=0) # [num_img + queue_size, dim]
     
     dist.barrier()
     dist.all_reduce(features, op=dist.ReduceOp.SUM)
     return features.cpu()
 
 
-def run_kmeans(x, args, mem_size):
+def run_kmeans(x, args):
     """
     Args:
         x: data to be clustered
@@ -555,15 +560,14 @@ def run_kmeans(x, args, mem_size):
         centroids = torch.Tensor(centroids).cuda()
         centroids = nn.functional.normalize(centroids, p=2, dim=1)
 
-        im2cluster = torch.LongTensor(im2cluster)[:mem_size].cuda()
-        memory_lbl = torch.LongTensor(im2cluster)[mem_size:].cuda()
+
+        im2cluster_ = torch.LongTensor(im2cluster).cuda()
         
         density = torch.Tensor(density).cuda()
 
         results['centroids'].append(centroids)
         results['density'].append(density)
-        results['im2cluster'].append(im2cluster)
-        results['memory_lbl'].append(memory_lbl)
+        results['im2cluster'].append(im2cluster_)
 
     return results
 
