@@ -9,6 +9,7 @@ import warnings
 from tqdm import tqdm
 import numpy as np
 import faiss
+import sys 
 
 import torch
 import torch.nn as nn
@@ -22,10 +23,10 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-
+from mymodels import resnet_big 
 import pcl.loader
 import pcl.builder
-
+import logger.txt_logger as logger
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
@@ -58,7 +59,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
-parser.add_argument('-p', '--print-freq', default=100, type=int,
+parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
@@ -108,6 +109,9 @@ parser.add_argument('--data-root', type=str, default="imagenet_unzip",
                     help='data root for ImageFolder')
 parser.add_argument('--perform_cluster_epoch', type=int, default=2,
                     help='number of epochs that perform the clustering')
+
+parser.add_argument('--dataset', type=str, default="imagenet100")
+parser.add_argument('--image_size', type=int, default=224)
 
 
 def main():
@@ -180,10 +184,17 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
+    if args.dataset == 'UT-zappos':
+        print("Using costimized resnet")
+        basemodel = resnet_big.utzap_resnet50()
+    else:
+        print("Using normal resnet")
+        basemodel = models.__dict__[args.arch]
+    
     model = pcl.builder.MoCo(
-        models.__dict__[args.arch],
+        basemodel,
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
-    #print(model)
+    print(model)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -242,13 +253,25 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    if args.dataset == 'imagenet100':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+    elif args.dataset == 'CUB':
+        normalize = transforms.Normalize(mean=[0.4863, 0.4999, 0.4312],
+                                        std=[0.2070, 0.2018, 0.2428])
+    elif args.dataset == 'Wider':
+        normalize = transforms.Normalize(mean=[0.4772, 0.4405, 0.4100],
+                                        std=[0.2960, 0.2876, 0.2935])
+    elif args.dataset == 'UT-zappos':
+        normalize = transforms.Normalize(mean=[0.8342, 0.8142, 0.8081],
+                                        std=[0.2804, 0.3014, 0.3072])
+    else:
+        raise NotImplementedError
 
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
         augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(args.image_size, scale=(0.2, 1.)),
             transforms.RandomApply([
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
             ], p=0.8),
@@ -261,7 +284,7 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
         augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(args.image_size, scale=(0.2, 1.)),
             transforms.RandomGrayscale(p=0.2),
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
             transforms.RandomHorizontalFlip(),
@@ -270,9 +293,10 @@ def main_worker(gpu, ngpus_per_node, args):
         ]
 
     # center-crop augmentation
+    upsize = int(2 ** (np.ceil(np.log2(args.image_size))))
     eval_augmentation = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize((upsize, upsize)),
+        transforms.CenterCrop(args.image_size),
         transforms.ToTensor(),
         normalize
         ])
@@ -300,9 +324,15 @@ def main_worker(gpu, ngpus_per_node, args):
         eval_dataset, batch_size=args.batch_size*5, shuffle=False,
         sampler=eval_sampler, num_workers=args.workers, pin_memory=True)
 
+
+    # logger
+    if args.gpu == 0:
+        txt_logger = logger.txt_logger(args.exp_dir, args, 'python ' + ' '.join(sys.argv))
+
+
+    cluster_result = None
     for epoch in range(args.start_epoch, args.epochs):
 
-        cluster_result = None
         if epoch>=args.warmup_epoch:
 
             if (epoch+1) % args.perform_cluster_epoch == 0:
@@ -336,7 +366,7 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+        loss = train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -347,6 +377,14 @@ def main_worker(gpu, ngpus_per_node, args):
                 'optimizer' : optimizer.state_dict(),
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
 
+        if args.gpu == 0:
+            for param_group in optimizer.param_groups:
+                lr = param_group['lr']
+            
+            txt_logger.log_value(epoch, 
+                    ('loss', loss),
+                    ('learning_rate', lr)
+                )
 
 def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -405,10 +443,12 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
 
         if i % args.print_freq == 0:
             progress.display(i)
+    # free the cache
+    del images
+    torch.cuda.empty_cache()
+    
+    return losses.avg
 
-        # free the cache
-        del images
-        torch.cuda.empty_cache()
 
 
 def compute_features(eval_loader, model, args):

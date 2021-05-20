@@ -361,7 +361,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     for epoch in range(args.start_epoch, args.epochs):
 
-        
+        cluster_result = None
         if epoch>=args.warmup_epoch:
 
             if (epoch+1) % args.perform_cluster_epoch == 0:
@@ -477,9 +477,6 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
 
         if i % args.print_freq == 0:
             progress.display(i)
-        
-
-
     return losses.avg
 
 
