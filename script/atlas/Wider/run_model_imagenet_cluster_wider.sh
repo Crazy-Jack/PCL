@@ -10,14 +10,16 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
+lr=0.15;
+bz=40;
 python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/Wider/Image \
 -a resnet50 \
---lr 0.03 \
---batch-size 128 \
---temperature 0.2 \
+--lr $lr \
+--batch-size $bz \
+--temperature 0.1 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/Cl-infonce/Wider/unsupervised/num_cluster_$1+lr0.03+bz128+trail1 \
+--exp-dir /results/tianqinl/train_related/Cl-infonce/Wider/unsupervised/num_cluster_$1+lr$lr+bz$bz+trail1 \
 --warmup-epoch 100 \
 --data-root train \
 --dataset Wider \
@@ -27,7 +29,7 @@ python3 /home/tianqinl/PCL/main_moco_cluster.py /work/tianqinl/Wider/Image \
 --pcl-r 128 \
 --num-cluster $1 \
 --epochs 1000 \
---resume /results/tianqinl/train_related/Cl-infonce/Wider/unsupervised/num_cluster_1000+lr0.03+bz128+trail1/checkpoint_0499.pth.tar \
+#--resume /results/tianqinl/train_related/Cl-infonce/Wider/unsupervised/num_cluster_1000+lr0.03+bz128+trail1/checkpoint_0499.pth.tar \
 # --resume $2 \
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \

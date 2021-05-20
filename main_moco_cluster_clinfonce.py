@@ -477,9 +477,6 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
 
         if i % args.print_freq == 0:
             progress.display(i)
-        
-
-
     return losses.avg
 
 

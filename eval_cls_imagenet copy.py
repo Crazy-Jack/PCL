@@ -86,8 +86,7 @@ parser.add_argument('--val-root', type=str, default="validation_folder",
                     help="data root for validation ")
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
-parser.add_argument('--dataset', type=str, default="imagenet100")
-parser.add_argument('--image_size', type=int, default=224)
+
 
 
 
@@ -255,22 +254,9 @@ def main_worker(gpu, ngpus_per_node, args):
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
     valdir = os.path.join(args.data, args.val_root)
-    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-    #                                  std=[0.229, 0.224, 0.225])
-    if args.dataset == 'imagenet100':
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
-    elif args.dataset == 'CUB':
-        normalize = transforms.Normalize(mean=[0.4863, 0.4999, 0.4312],
-                                        std=[0.2070, 0.2018, 0.2428])
-    elif args.dataset == 'Wider':
-        normalize = transforms.Normalize(mean=[0.4772, 0.4405, 0.4100],
-                                        std=[0.2960, 0.2876, 0.2935])
-    elif args.dataset == 'UT-zappos':
-        normalize = transforms.Normalize(mean=[0.8342, 0.8142, 0.8081],
-                                        std=[0.2804, 0.3014, 0.3072])
-    else:
-        raise NotImplementedError
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([

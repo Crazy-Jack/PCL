@@ -1,25 +1,29 @@
 import torch
 import torch.nn as nn
-from random import choices
+from random import sample
 
 class MoCo(nn.Module):
     """
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False):
+    def __init__(self, base_encoder, dim=128, r=64, m=0.999, T=0.1, mlp=False, distributed=True, batch_size=256, cluster_levels=3):
         """
         dim: feature dimension (default: 128)
-        r: queue size; number of negative samples/prototypes (default: 16384)
+        r: queue size; number of negative samples/prototypes of times comparing to batchsize (default: 16384)
         m: momentum for updating key encoder (default: 0.999)
-        T: softmax temperature 
+        T: softmax temperature
         mlp: whether to use mlp projection
         """
         super(MoCo, self).__init__()
 
-        self.r = r
+        self.r = r * batch_size
+        # assert self.r < 16384
+
         self.m = m
         self.T = T
+
+        self.distributed = distributed
 
         # create the encoders
         # num_classes is the output fc dimension
@@ -36,8 +40,12 @@ class MoCo(nn.Module):
             param_k.requires_grad = False  # not update by gradient
 
         # create the queue
-        self.register_buffer("queue", torch.randn(dim, r))
+        self.register_buffer("queue", torch.randn(dim, self.r))
         self.queue = nn.functional.normalize(self.queue, dim=0)
+        print(f"Queue Size {self.queue.shape}")
+
+        # register labels in memory
+        self.register_buffer('mem_labels', torch.zeros(self.r, dtype=torch.long))
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
@@ -60,6 +68,10 @@ class MoCo(nn.Module):
         assert self.r % batch_size == 0  # for simplicity
 
         # replace the keys at ptr (dequeue and enqueue)
+        # print(f"batch_size {batch_size}")
+        # print(f"ptr {ptr}")
+        # print(f"self.queue {self.queue.shape}")
+        # print(f"self.queue[:, ptr:ptr + batch_size] {self.queue[:, ptr:ptr + batch_size].shape}")
         self.queue[:, ptr:ptr + batch_size] = keys.T
         ptr = (ptr + batch_size) % self.r  # move pointer
 
@@ -73,7 +85,18 @@ class MoCo(nn.Module):
         """
         # gather from all gpus
         batch_size_this = x.shape[0]
-        x_gather = concat_all_gather(x)
+
+        if self.distributed:
+            x_gather = concat_all_gather(x)
+        else:
+            x_gather = x
+            batch_size_all = x_gather.shape[0]
+            # random shuffle index
+            idx_shuffle = torch.randperm(batch_size_all).cuda()
+            idx_unshuffle = torch.argsort(idx_shuffle)
+            return x_gather[idx_unshuffle], idx_unshuffle
+
+
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
@@ -123,12 +146,12 @@ class MoCo(nn.Module):
         Output:
             logits, targets, proto_logits, proto_targets
         """
-        
+
         if is_eval:
-            k = self.encoder_k(im_q)  
-            k = nn.functional.normalize(k, dim=1)            
+            k = self.encoder_k(im_q)
+            k = nn.functional.normalize(k, dim=1)
             return k
-        
+
         # compute key features
         with torch.no_grad():  # no gradient to keys
             self._momentum_update_key_encoder()  # update the key encoder
@@ -145,7 +168,7 @@ class MoCo(nn.Module):
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
-        
+
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
@@ -164,41 +187,9 @@ class MoCo(nn.Module):
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
-        
-        # prototypical contrast
-        if cluster_result is not None:  
-            proto_labels = []
-            proto_logits = []
-            for n, (im2cluster,prototypes,density) in enumerate(zip(cluster_result['im2cluster'],cluster_result['centroids'],cluster_result['density'])):
-                # get positive prototypes
-                pos_proto_id = im2cluster[index]
-                pos_prototypes = prototypes[pos_proto_id]    
-                
-                # sample negative prototypes
-                all_proto_id = [i for i in range(im2cluster.max())]       
-                neg_proto_id = set(all_proto_id)-set(pos_proto_id.tolist())
-                # print(f"neg_proto_id {neg_proto_id}")
-                # print(f"self.r {self.r}")
-                neg_proto_id = choices([ng_id for ng_id in neg_proto_id], k=self.r) #sample r negative prototypes 
-                neg_prototypes = prototypes[neg_proto_id]    
 
-                proto_selected = torch.cat([pos_prototypes,neg_prototypes],dim=0)
-                
-                # compute prototypical logits
-                logits_proto = torch.mm(q,proto_selected.t())
-                
-                # targets for prototype assignment
-                labels_proto = torch.linspace(0, q.size(0)-1, steps=q.size(0)).long().cuda()
-                
-                # scaling temperatures for the selected prototypes
-                temp_proto = density[torch.cat([pos_proto_id,torch.LongTensor(neg_proto_id).cuda()],dim=0)]  
-                logits_proto /= temp_proto
-                
-                proto_labels.append(labels_proto)
-                proto_logits.append(logits_proto)
-            return logits, labels, proto_logits, proto_labels
-        else:
-            return logits, labels, None, None
+        return logits, labels, q, k
+
 
 
 # utils
@@ -214,3 +205,33 @@ def concat_all_gather(tensor):
 
     output = torch.cat(tensors_gather, dim=0)
     return output
+
+
+
+
+if __name__ == '__main__':
+    import torchvision.models as models
+    # param
+    low_dim = 128
+    pcl_r = 16384
+    moco_m = 0.999
+    temperature = 0.2
+    mlp = True
+
+    # define model
+    model = MoCo(
+        models.__dict__['resnet50'],
+        low_dim, pcl_r, moco_m, temperature, mlp, distributed=False)
+
+    # test
+    n, c, h, w = 32, 3, 224, 224
+    image1 = torch.rand(n, c, h, w)
+    image2 = torch.rand(n, c, h, w)
+    cluster_result = None
+    index = torch.randint(120000, size=(32,))
+
+    output, target, output_proto, target_proto = model(im_q=image1, im_k=image2, cluster_result=cluster_result, index=index)
+
+
+
+
