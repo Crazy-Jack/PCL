@@ -11,25 +11,29 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /scratch/tianqinl/imagenet/ \
+bz=896;
+
+CUDA_VISIBLE_DEVICES=$3 python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /usr0/tianqinl/imagenet/ \
 -a resnet50 \
 --lr 0.03 \
---batch-size 8\
+--batch-size $bz \
 --temperature 0.2 \
 --mlp --aug-plus --cos \
 --dist-url 'tcp://localhost:10002' --multiprocessing-distributed --world-size 1 --rank 0 \
---exp-dir /results/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_corrected_by_weaksupcon/gran_$1/bz_256_num_cluster_$2 \
+--exp-dir /usr0/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_corrected_by_weaksupcon/gran_$1/bz_$bz-_num_cluster_$2 \
 --warmup-epoch 10 \
 --data-root imagenet_unzip \
---save-epoch 1 \
+--save-epoch 10 \
 --perform-cluster-epoch 1 \
---workers 10 \
---pcl-r 128 \
+--workers 20 \
+--pcl-r 64 \
 --num-cluster $2 \
 --latent-class imagenet_all \
 --meta-data-train meta_data_train.csv \
 --gran-lvl $1 \
---resume $3 \
+--epochs 100 \
+#--resume $3 \
+
 # --resume /results/tianqinl/train_related/imagenet/target_100/moco_cluster/checkpoint_0194.pth.tar
 # --resume /results/tianqinl/train_related/imagenet/target_100/checkpoint_0099.pth.tar \
 

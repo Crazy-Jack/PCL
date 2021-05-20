@@ -12,14 +12,15 @@ class MoCo(nn.Module):
         dim: feature dimension (default: 128)
         r: queue size; number of negative samples/prototypes of times comparing to batchsize (default: 16384)
         m: momentum for updating key encoder (default: 0.999)
-        T: softmax temperature 
+        T: softmax temperature
         mlp: whether to use mlp projection
         """
         super(MoCo, self).__init__()
-        
+
         self.r = r * batch_size
+        print("self.r: ", self.r)
         # assert self.r < 16384
-        
+
         self.m = m
         self.T = T
 
@@ -62,7 +63,7 @@ class MoCo(nn.Module):
         batch_size = keys.shape[0]
 
         ptr = int(self.queue_ptr)
-        assert self.r % batch_size == 0  # for simplicity
+        assert self.r % batch_size == 0, f"batch_size {batch_size} but queue size: {self.r}"  # for simplicity
 
         # replace the keys at ptr (dequeue and enqueue)
         # print(f"batch_size {batch_size}")
@@ -93,7 +94,7 @@ class MoCo(nn.Module):
             idx_unshuffle = torch.argsort(idx_shuffle)
             return x_gather[idx_unshuffle], idx_unshuffle
 
-        
+
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
@@ -143,12 +144,12 @@ class MoCo(nn.Module):
         Output:
             logits, targets, proto_logits, proto_targets
         """
-        
+
         if is_eval:
-            k = self.encoder_k(im_q)  
-            k = nn.functional.normalize(k, dim=1)            
+            k = self.encoder_k(im_q)
+            k = nn.functional.normalize(k, dim=1)
             return k
-        
+
         # compute key features
         with torch.no_grad():  # no gradient to keys
             self._momentum_update_key_encoder()  # update the key encoder
@@ -165,7 +166,7 @@ class MoCo(nn.Module):
         # compute query features
         q = self.encoder_q(im_q)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
-        
+
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
@@ -184,9 +185,9 @@ class MoCo(nn.Module):
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
-        
+
         return logits, labels, q, k
-        
+
 
 
 # utils
@@ -224,11 +225,11 @@ if __name__ == '__main__':
     n, c, h, w = 32, 3, 224, 224
     image1 = torch.rand(n, c, h, w)
     image2 = torch.rand(n, c, h, w)
-    cluster_result = None 
+    cluster_result = None
     index = torch.randint(120000, size=(32,))
 
     output, target, output_proto, target_proto = model(im_q=image1, im_k=image2, cluster_result=cluster_result, index=index)
 
 
 
-    
+

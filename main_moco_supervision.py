@@ -8,7 +8,7 @@ import time
 import warnings
 from tqdm import tqdm
 import numpy as np
-import faiss
+#import faiss
 import datetime
 
 import torch
@@ -23,10 +23,12 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+import pandas as pd
 
 import pcl.loader
 import pcl.builder_cluster
 import pcl.SupConLoss
+from pcl.FilterByWeakSupCon import SupConFilterByWeakLabels
 from AutoEval import AutoEval
 
 model_names = sorted(name for name in models.__dict__
@@ -113,13 +115,13 @@ parser.add_argument('--perform-cluster-epoch', type=int, default=2,
                     help='number of epochs that perform the clustering')
 parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/script")
 parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
-parser.add_argument('--launch_eval_epoch', type=int, default=30)
+parser.add_argument('--launch-eval-epoch', type=int, default=30)
+parser.add_argument('--threshold', type=float, default=0.1, help="threshold for determine the hard example")
 
-
-# parser.add_argument('--latent-class', type=str, default="hier_target100",
-#                     help="meta data folder for containing image")
-# parser.add_argument('--meta-data-train', type=str, default="meta_file_train_target100.csv")
-# parser.add_argument('--gran-lvl', type=str, required=True)
+parser.add_argument('--latent-class', type=str, default="target_class_100",
+                    help="meta data folder for containing image")
+parser.add_argument('--meta-data-train', type=str, default="meta_file_train_target100.csv")
+parser.add_argument('--gran-lvl', type=str, required=True)
 
 
 def main():
@@ -222,7 +224,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
     # define supercon loss
-    supcon_criterion = pcl.SupConLoss.SupConLoss(temperature=args.temperature)
+    supcon_criterion = SupConFilterByWeakLabels(temperature=args.temperature, threshold=args.threshold)
 
 
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
@@ -251,7 +253,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
-    # latent_class_dir = os.path.join(args.data, args.latent_class)
+    latent_class_dir = os.path.join(args.data, args.latent_class)
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -291,17 +293,16 @@ def main_worker(gpu, ngpus_per_node, args):
     ###############
     #   Dataset   #
     ###############
-    train_dataset = pcl.loader.ImageFolderInstance(
-        traindir,
-        pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    # train_dataset = pcl.loader.DynamicLabelDataset(
+    #     traindir,
+    #     pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+
+    train_df = pd.read_csv(os.path.join(latent_class_dir, args.meta_data_train), index_col=0)
+
+    train_dataset = pcl.loader.DynamicLabelDataset(train_df, traindir, args.gran_lvl, pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
     eval_dataset = pcl.loader.ImageFolderInstance(
         traindir,
         eval_augmentation)
-    # train_df = pd.read_csv(os.path.join(latent_class_dir, agrs.meta_data_train), index_col=0)
-
-    # train_dataset = pcl.loader.DynamicLabelDataset(train_df, train_dir, args.gran_lvl, transforms.Compose(augmentation))
-    # eval_dataset = pcl.loader.DynamicLabelDataset(train_df, train_dir, args.gran_lvl, eval_augmentation)
-
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -325,50 +326,19 @@ def main_worker(gpu, ngpus_per_node, args):
         with open(os.path.join(args.exp_dir, "Eval_SID.txt"), "w") as f:
             f.write(f"============\nInitial {datetime.datetime.now()}")
 
+
+    ###############
+    #   Train   #
+    ###############
     for epoch in range(args.start_epoch, args.epochs):
 
-        cluster_result = None
-        if epoch>=args.warmup_epoch:
-
-            if (epoch+1) % args.perform_cluster_epoch == 0:
-                # compute momentum features for center-cropped images
-                features = compute_features(eval_loader, model, args)
-
-                # placeholder for clustering result
-                cluster_result = {'im2cluster':[],'centroids':[],'density':[]}
-                for num_cluster in args.num_cluster:
-                    cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset),dtype=torch.long).cuda())
-                    cluster_result['centroids'].append(torch.zeros(int(num_cluster),args.low_dim).cuda())
-                    cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda())
-
-                if args.gpu == 0:
-                    features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice
-                    features = features.numpy()
-                    cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
-                    # save the clustering result
-                    if (epoch+1) % args.save_epoch == 0:
-                        print("\nSaving cluster results...\n")
-                        torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))
-
-                        #if (epoch+1) % args.launch_eval_epoch == 0:
-                            # auto eval
-                            #eval_script = os.path.join(args.script_root, args.eval_script_filename)
-                            #autoE = AutoEval(args.exp_dir, eval_script)
-                            #sid = autoE.eval(epoch)
-                            #with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
-                            #    f.write(sid+"\n")
-                dist.barrier()
-                # broadcast clustering result
-                for k, data_list in cluster_result.items():
-                    for data_tensor in data_list:
-                        dist.broadcast(data_tensor, 0, async_op=False)
 
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
+        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -380,7 +350,7 @@ def main_worker(gpu, ngpus_per_node, args):
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
 
 
-def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result=None):
+def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -396,7 +366,7 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
     model.train()
 
     end = time.time()
-    for i, (images, index) in tqdm(enumerate(train_loader), total=len(train_loader)):
+    for i, (images, index, weak_labels) in tqdm(enumerate(train_loader), total=len(train_loader)):
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -404,22 +374,16 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
 
+        # send weak labels to gpu
+        weak_labels = weak_labels.cuda(args.gpu, non_blocking=True)
         # compute output
         output, target, feat_q, feat_k = model(im_q=images[0], im_k=images[1]) # feat_q, feat_k: NxC, NxC
         # InfoNCE loss on
         loss = criterion(output, target)
 
-        if cluster_result is not None:
-            # print("SupCon on learnt clustering...")
-            # Cluster Version of supercon loss
-            # define features
-            features = torch.cat([feat_q.unsqueeze(1), feat_k.unsqueeze(1)], dim=1)
-            # define labels from cluster results
-            for cluster_i in cluster_result['im2cluster']:
-                labels = cluster_i[index]
-                # SupCon Loss for clustering labels
-                loss += supcon_criterion(features, labels)
-
+        features = torch.cat([feat_q.unsqueeze(1), feat_k.unsqueeze(1)], dim=1)
+        supercon_loss = supcon_criterion(features, weak_labels)
+        loss += supercon_loss
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0]
         acc_inst.update(acc[0], images[0].size(0))
