@@ -11,7 +11,7 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-trail=0
+trail=1
 
 python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /work/tianqinl/imagenet/ \
 -a resnet50 \

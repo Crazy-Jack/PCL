@@ -11,7 +11,7 @@
 ls /work/tianqinl
 ls /results/tianqinl
 
-trail=0
+trail=19
 bz=256
 
 CUDA_VISIBLE_DEVICES=$3 python3 /home/tianqinl/PCL/main_moco_cluster_checkbyweak.py /scratch/tianqinl/CUB_200_2011 \

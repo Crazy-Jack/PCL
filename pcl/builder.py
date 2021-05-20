@@ -7,7 +7,7 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False, distributed=True):
+    def __init__(self, base_encoder, dim=128, r=16384, m=0.999, T=0.1, mlp=False):
         """
         dim: feature dimension (default: 128)
         r: queue size; number of negative samples/prototypes (default: 16384)
@@ -20,8 +20,6 @@ class MoCo(nn.Module):
         self.r = r
         self.m = m
         self.T = T
-
-        self.distributed = distributed
 
         # create the encoders
         # num_classes is the output fc dimension
@@ -75,18 +73,7 @@ class MoCo(nn.Module):
         """
         # gather from all gpus
         batch_size_this = x.shape[0]
-
-        if self.distributed:
-            x_gather = concat_all_gather(x)
-        else:
-            x_gather = x
-            batch_size_all = x_gather.shape[0]
-            # random shuffle index
-            idx_shuffle = torch.randperm(batch_size_all).cuda()
-            idx_unshuffle = torch.argsort(idx_shuffle)
-            return x_gather[idx_unshuffle], idx_unshuffle
-
-        
+        x_gather = concat_all_gather(x)
         batch_size_all = x_gather.shape[0]
 
         num_gpus = batch_size_all // batch_size_this
@@ -225,33 +212,3 @@ def concat_all_gather(tensor):
 
     output = torch.cat(tensors_gather, dim=0)
     return output
-
-
-
-
-if __name__ == '__main__':
-    import torchvision.models as models
-    # param
-    low_dim = 128
-    pcl_r = 16384
-    moco_m = 0.999
-    temperature = 0.2
-    mlp = True
-
-    # define model
-    model = MoCo(
-        models.__dict__['resnet50'],
-        low_dim, pcl_r, moco_m, temperature, mlp, distributed=False)
-
-    # test
-    n, c, h, w = 32, 3, 224, 224
-    image1 = torch.rand(n, c, h, w)
-    image2 = torch.rand(n, c, h, w)
-    cluster_result = None 
-    index = torch.randint(120000, size=(32,))
-
-    output, target, output_proto, target_proto = model(im_q=image1, im_k=image2, cluster_result=cluster_result, index=index)
-
-
-
-    

@@ -15,7 +15,7 @@ echo "Start at -- $(date)";
 python /home/tianqinl/PCL/eval_cls_imagenet.py /work/tianqinl/imagenet/ \
 --pretrained $1/checkpoint_$2.pth.tar \
 -a resnet50 \
---lr 0.3 --cos \
+--lr 5 --cos \
 --batch-size 512 \
 --id epoch_$2 \
 --data-root train_100 \
