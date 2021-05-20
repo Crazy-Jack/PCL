@@ -5,6 +5,7 @@ import os
 import random
 import shutil
 import time
+import sys
 import warnings
 from tqdm import tqdm
 import numpy as np
@@ -23,10 +24,11 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-
+from mymodels import resnet_big 
 import pcl.loader
 import pcl.builder_cluster
 import pcl.SupConLoss
+import logger.txt_logger as logger
 from AutoEval import AutoEval
 
 model_names = sorted(name for name in models.__dict__
@@ -114,6 +116,9 @@ parser.add_argument('--perform-cluster-epoch', type=int, default=2,
 parser.add_argument('--script-root', type=str, default="/home/tianqinl/PCL/script")
 parser.add_argument('--eval-script-filename', type=str, default="run_linear_eval_all.sh")
 parser.add_argument('--launch_eval_epoch', type=int, default=30)
+parser.add_argument('--dataset', type=str, default="imagenet100")
+parser.add_argument('--image_size', type=int, default=224)
+
 
 
 # parser.add_argument('--latent-class', type=str, default="hier_target100",
@@ -186,8 +191,15 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
+    if args.dataset == 'UT-zappos':
+        print("Using costimized resnet")
+        basemodel = resnet_big.utzap_resnet50()
+    else:
+        print("Using normal resnet")
+        basemodel = models.__dict__[args.arch]
+    
     model = pcl.builder_cluster.MoCo(
-        models.__dict__[args.arch],
+        basemodel,
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
     print(model)
 
@@ -252,13 +264,34 @@ def main_worker(gpu, ngpus_per_node, args):
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
     # latent_class_dir = os.path.join(args.data, args.latent_class)
+<<<<<<< HEAD
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
+=======
+    if args.dataset == 'imagenet100':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+    elif args.dataset == 'CUB':
+        normalize = transforms.Normalize(mean=[0.4863, 0.4999, 0.4312],
+                                        std=[0.2070, 0.2018, 0.2428])
+    elif args.dataset == 'Wider':
+        normalize = transforms.Normalize(mean=[0.4772, 0.4405, 0.4100],
+                                        std=[0.2960, 0.2876, 0.2935])
+    elif args.dataset == 'UT-zappos':
+        normalize = transforms.Normalize(mean=[0.8342, 0.8142, 0.8081],
+                                        std=[0.2804, 0.3014, 0.3072])
+    else:
+        raise NotImplementedError
+    
+                                
+
+    
+>>>>>>> b3d70951468df50d5db6f739c7ffb087131f8b2f
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
         augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(args.image_size, scale=(0.2, 1.)),
             transforms.RandomApply([
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
             ], p=0.8),
@@ -271,7 +304,7 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # MoCo v1's aug: same as InstDisc https://arxiv.org/abs/1805.01978
         augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(args.image_size, scale=(0.2, 1.)),
             transforms.RandomGrayscale(p=0.2),
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
             transforms.RandomHorizontalFlip(),
@@ -280,9 +313,13 @@ def main_worker(gpu, ngpus_per_node, args):
         ]
 
     # center-crop augmentation
+<<<<<<< HEAD
+=======
+    upsize = int(2 ** (np.ceil(np.log2(args.image_size))))
+>>>>>>> b3d70951468df50d5db6f739c7ffb087131f8b2f
     eval_augmentation = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize((upsize, upsize)),
+        transforms.CenterCrop(args.image_size),
         transforms.ToTensor(),
         normalize
         ])
@@ -325,9 +362,21 @@ def main_worker(gpu, ngpus_per_node, args):
         with open(os.path.join(args.exp_dir, "Eval_SID.txt"), "w") as f:
             f.write(f"============\nInitial {datetime.datetime.now()}")
 
+<<<<<<< HEAD
     for epoch in range(args.start_epoch, args.epochs):
 
         cluster_result = None
+=======
+    # logger
+    if args.gpu == 0:
+        txt_logger = logger.txt_logger(args.exp_dir, args, 'python ' + ' '.join(sys.argv))
+
+
+
+    for epoch in range(args.start_epoch, args.epochs):
+
+        
+>>>>>>> b3d70951468df50d5db6f739c7ffb087131f8b2f
         if epoch>=args.warmup_epoch:
 
             if (epoch+1) % args.perform_cluster_epoch == 0:
@@ -348,6 +397,7 @@ def main_worker(gpu, ngpus_per_node, args):
                     # save the clustering result
                     if (epoch+1) % args.save_epoch == 0:
                         print("\nSaving cluster results...\n")
+<<<<<<< HEAD
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))
 
                         #if (epoch+1) % args.launch_eval_epoch == 0:
@@ -358,6 +408,18 @@ def main_worker(gpu, ngpus_per_node, args):
                             #with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
                             #    f.write(sid+"\n")
                 dist.barrier()
+=======
+                        torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
+                
+                        # if (epoch+1) % args.launch_eval_epoch == 0:
+                        #     # auto eval 
+                        #     eval_script = os.path.join(args.script_root, args.eval_script_filename)
+                        #     autoE = AutoEval(args.exp_dir, eval_script)
+                        #     sid = autoE.eval(epoch)
+                        #     with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
+                        #         f.write(sid+"\n")
+                dist.barrier()  
+>>>>>>> b3d70951468df50d5db6f739c7ffb087131f8b2f
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():
                     for data_tensor in data_list:
@@ -368,7 +430,7 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
+        loss = train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result)
 
         if (epoch+1)%args.save_epoch==0 and (not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0)):
@@ -378,7 +440,15 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir,epoch))
-
+        
+        if args.gpu == 0:
+            for param_group in optimizer.param_groups:
+                lr = param_group['lr']
+            
+            txt_logger.log_value(epoch, 
+                    ('loss', loss),
+                    ('learning_rate', lr)
+                )
 
 def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, args, cluster_result=None):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -437,6 +507,11 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
             progress.display(i)
 
 
+<<<<<<< HEAD
+=======
+    return losses.avg
+
+>>>>>>> b3d70951468df50d5db6f739c7ffb087131f8b2f
 
 def compute_features(eval_loader, model, args):
     print('Computing features...')

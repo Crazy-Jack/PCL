@@ -22,5 +22,5 @@ CUDA_VISIBLE_DEVICES=$4 python3.6 /home/tianqinl/PCL/eval_cls_imagenet.py /work/
 --val-root validation_folder \
 --world-size 1 --rank 0 \
 --dist-url "tcp://localhost:10001" --multiprocessing-distributed \
---resume $1/Linear_eval/epoch_$2_tensorboard/checkpoint.pth.tar \
+# --resume $1/Linear_eval/epoch_$2_tensorboard/checkpoint.pth.tar \
 # job 168726 for /results/tianqinl/train_related/imagenet/imagenet_all/moco_cluster_25000numfrom50epoch epoch 69

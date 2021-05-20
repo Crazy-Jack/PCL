@@ -20,6 +20,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 import tensorboard_logger as tb_logger
+from mymodels import resnet_big 
+import numpy as np
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -86,7 +88,8 @@ parser.add_argument('--val-root', type=str, default="validation_folder",
                     help="data root for validation ")
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
-
+parser.add_argument('--dataset', type=str, default="imagenet100")
+parser.add_argument('--image_size', type=int, default=224)
 
 
 
@@ -153,7 +156,20 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch]()
+    # model = models.__dict__[args.arch]()
+
+    if args.dataset == 'UT-zappos':
+        print("Using costimized resnet")
+        model = resnet_big.utzap_resnet50()(num_classes=128)
+    else:
+        print("Using normal resnet")
+        model = models.__dict__[args.arch]()
+    
+    # model = pcl.builder_cluster.MoCo(
+    #     basemodel,
+    #     args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
+    print(model)
+
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():
@@ -254,13 +270,28 @@ def main_worker(gpu, ngpus_per_node, args):
     # Data loading code
     traindir = os.path.join(args.data, args.data_root)
     valdir = os.path.join(args.data, args.val_root)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                                  std=[0.229, 0.224, 0.225])
+    if args.dataset == 'imagenet100':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+    elif args.dataset == 'CUB':
+        normalize = transforms.Normalize(mean=[0.4863, 0.4999, 0.4312],
+                                        std=[0.2070, 0.2018, 0.2428])
+    elif args.dataset == 'Wider':
+        normalize = transforms.Normalize(mean=[0.4772, 0.4405, 0.4100],
+                                        std=[0.2960, 0.2876, 0.2935])
+    elif args.dataset == 'UT-zappos':
+        normalize = transforms.Normalize(mean=[0.8342, 0.8142, 0.8081],
+                                        std=[0.2804, 0.3014, 0.3072])
+    else:
+        raise NotImplementedError
+    
+    
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([
-            transforms.RandomResizedCrop(224),
+            transforms.RandomResizedCrop(args.image_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -274,11 +305,12 @@ def main_worker(gpu, ngpus_per_node, args):
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=False, sampler=train_sampler)
-
+    
+    upsize = int(2 ** (np.ceil(np.log2(args.image_size))))
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.Resize((upsize, upsize)),
+            transforms.CenterCrop(args.image_size),
             transforms.ToTensor(),
             normalize,
         ])),
