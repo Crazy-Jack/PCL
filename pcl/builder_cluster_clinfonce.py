@@ -214,7 +214,7 @@ class MoCo(nn.Module):
             labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
 
             # loss
-            loss = ce_criterion(logits, labels)
+            loss = self.ce_criterion(logits, labels)
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
