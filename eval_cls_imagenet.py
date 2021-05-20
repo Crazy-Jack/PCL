@@ -20,6 +20,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 import tensorboard_logger as tb_logger
+from mymodels import resnet_big 
+import numpy as np
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -154,7 +156,20 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch]()
+    # model = models.__dict__[args.arch]()
+
+    if args.dataset == 'UT-zappos':
+        print("Using costimized resnet")
+        model = resnet_big.utzap_resnet50()(num_classes=128)
+    else:
+        print("Using normal resnet")
+        model = models.__dict__[args.arch]()
+    
+    # model = pcl.builder_cluster.MoCo(
+    #     basemodel,
+    #     args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
+    print(model)
+
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():
@@ -271,10 +286,12 @@ def main_worker(gpu, ngpus_per_node, args):
                                         std=[0.2804, 0.3014, 0.3072])
     else:
         raise NotImplementedError
+    
+    
     train_dataset = datasets.ImageFolder(
         traindir,
         transforms.Compose([
-            transforms.RandomResizedCrop(224),
+            transforms.RandomResizedCrop(args.image_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -288,11 +305,12 @@ def main_worker(gpu, ngpus_per_node, args):
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=False, sampler=train_sampler)
-
+    
+    upsize = int(2 ** (np.ceil(np.log2(args.image_size))))
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.Resize((upsize, upsize)),
+            transforms.CenterCrop(args.image_size),
             transforms.ToTensor(),
             normalize,
         ])),

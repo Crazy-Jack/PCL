@@ -26,7 +26,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 from mymodels import resnet_big 
 import pcl.loader
-import pcl.builder_cluster
+import pcl.builder_cluster_clinfonce
 import pcl.SupConLoss
 import logger.txt_logger as logger
 from AutoEval import AutoEval
@@ -198,7 +198,7 @@ def main_worker(gpu, ngpus_per_node, args):
         print("Using normal resnet")
         basemodel = models.__dict__[args.arch]
     
-    model = pcl.builder_cluster.MoCo(
+    model = pcl.builder_cluster_clinfonce.MoCo(
         basemodel,
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp, batch_size=args.batch_size)
     print(model)
@@ -378,24 +378,25 @@ def main_worker(gpu, ngpus_per_node, args):
                 if args.gpu == 0:
                     features[torch.norm(features,dim=1)>1.5] /= 2 #account for the few samples that are computed twice
                     features = features.numpy()
-                    cluster_result = run_kmeans(features,args)  #run kmeans clustering on master node
+                    cluster_result = run_kmeans(features,args,model.r)  #run kmeans clustering on master node
+                    
                     # save the clustering result
                     if (epoch+1) % args.save_epoch == 0:
                         print("\nSaving cluster results...\n")
                         torch.save(cluster_result,os.path.join(args.exp_dir, 'clusters_%d'%epoch))  
                 
-                        # if (epoch+1) % args.launch_eval_epoch == 0:
-                        #     # auto eval 
-                        #     eval_script = os.path.join(args.script_root, args.eval_script_filename)
-                        #     autoE = AutoEval(args.exp_dir, eval_script)
-                        #     sid = autoE.eval(epoch)
-                        #     with open(os.path.join(args.exp_dir, "Eval_SID.txt"), 'a') as f:
-                        #         f.write(sid+"\n")
+                        
                 dist.barrier()  
                 # broadcast clustering result
                 for k, data_list in cluster_result.items():
                     for data_tensor in data_list:
                         dist.broadcast(data_tensor, 0, async_op=False)
+                
+                model.mem_labels = cluster_result['memory_lbl'].clone()
+                print(f"save model for inspection from node {arg.gpu}")
+                torch.save(model.mem_labels, os.path.join(args.exp_dir, 'memory_gpu_%d_epoch_%d'%(args.gpu, epoch)))  
+
+
 
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -446,25 +447,19 @@ def train(train_loader, model, criterion, supcon_criterion, optimizer, epoch, ar
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
 
-        # compute output
-        output, target, feat_q, feat_k = model(im_q=images[0], im_k=images[1]) # feat_q, feat_k: NxC, NxC
-        # InfoNCE loss on
-        loss = criterion(output, target)
-
+        # prepare for contrast moco
         if cluster_result is not None:
-            # print("SupCon on learnt clustering...")
-            # Cluster Version of supercon loss
-            # define features
-            features = torch.cat([feat_q.unsqueeze(1), feat_k.unsqueeze(1)], dim=1)
-            # define labels from cluster results
-            for cluster_i in cluster_result['im2cluster']:
-                labels = cluster_i[index]
-                # SupCon Loss for clustering labels
-                loss += supcon_criterion(features, labels)
+            assert len(cluster_result['im2cluster']) == 1, f"only one level of clustering is supported for now"
+            cluster_labels = cluster_result['im2cluster'][0][index] # cluster labels for the local
+            
+            # compute output
+            loss = model(im_q=images[0], im_k=images[1], is_eval=False, cluster_labels=cluster_labels) # feat_q, feat_k: NxC, NxC
+        
+        else:
+            # warmup
+            loss = model(im_q=images[0], im_k=images[1])
 
         losses.update(loss.item(), images[0].size(0))
-        acc = accuracy(output, target)[0]
-        acc_inst.update(acc[0], images[0].size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -491,20 +486,24 @@ def compute_features(eval_loader, model, args):
             images = images.cuda(non_blocking=True)
             feat = model(images,is_eval=True)
             features[index] = feat
+    
+    features = torch.cat([features, model.queue.clone().detach().T], axis=0) # [num_img + queue_size, dim]
+    
     dist.barrier()
     dist.all_reduce(features, op=dist.ReduceOp.SUM)
     return features.cpu()
 
 
-def run_kmeans(x, args):
+def run_kmeans(x, args, mem_size):
     """
     Args:
         x: data to be clustered
     """
 
     print('performing kmeans clustering')
-    results = {'im2cluster':[],'centroids':[],'density':[]}
+    results = {'im2cluster':[],'centroids':[],'density':[], 'memory_lbl': []}
 
+    assert len(args.num_cluster) == 1, "currently only one level clustering is supported, otherwise, memory has to has multiple levels"
     for seed, num_cluster in enumerate(args.num_cluster):
         # intialize faiss clustering parameters
         d = x.shape[1]
@@ -556,12 +555,15 @@ def run_kmeans(x, args):
         centroids = torch.Tensor(centroids).cuda()
         centroids = nn.functional.normalize(centroids, p=2, dim=1)
 
-        im2cluster = torch.LongTensor(im2cluster).cuda()
+        im2cluster = torch.LongTensor(im2cluster)[:mem_size].cuda()
+        memory_lbl = torch.LongTensor(im2cluster)[mem_size:].cuda()
+        
         density = torch.Tensor(density).cuda()
 
         results['centroids'].append(centroids)
         results['density'].append(density)
         results['im2cluster'].append(im2cluster)
+        results['memory_lbl'].append(memory_lbl)
 
     return results
 

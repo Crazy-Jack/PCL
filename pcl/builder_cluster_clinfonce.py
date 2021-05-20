@@ -45,9 +45,12 @@ class MoCo(nn.Module):
         print(f"Queue Size {self.queue.shape}")
 
         # register labels in memory
-        self.register_buffer('mem_labels', torch.zeros(self.r, dtype=torch.long))
+        self.register_buffer('mem_labels', torch.randint(2500, size=(self.r,), dtype=torch.long))
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+
+        # cross entropy for warmup
+        self.ce_criterion = nn.CrossEntropyLoss()
 
     @torch.no_grad()
     def _momentum_update_key_encoder(self):
@@ -135,13 +138,13 @@ class MoCo(nn.Module):
 
         return x_gather[idx_this]
 
-    def forward(self, im_q, im_k=None, is_eval=False, cluster_result=None, index=None):
+    def forward(self, im_q, im_k=None, is_eval=False, cluster_labels=None):
         """
         Input:
             im_q: a batch of query images
             im_k: a batch of key images
             is_eval: return momentum embeddings (used for clustering)
-            cluster_result: cluster assignments, centroids, and density
+            cluster_labels: torch.long (bz, )
             index: indices for training samples
         Output:
             logits, targets, proto_logits, proto_targets
@@ -169,26 +172,55 @@ class MoCo(nn.Module):
         q = self.encoder_q(im_q)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
 
-        # compute logits
-        # Einstein sum is more intuitive
-        # positive logits: Nx1
-        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
-        # negative logits: Nxr
-        l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
 
-        # logits: Nx(1+r)
-        logits = torch.cat([l_pos, l_neg], dim=1)
+        if cluster_labels is not None:
+            # compute logits
+            bsz = q.shape[0]  
+            self_mome_dot = torch.matmul(q, torch.transpose(k, 0, 1)).contiguous() # [bz_local, bz_local]
+            # contrast previous
+            queue = self.queue.clone().detach()
+            logit_memory = torch.mm(q, queue) # [bz_local, hidden_dim] x [hidden_dim, mem_size] = [bz_local, mem_size]
+            
+            logit = torch.cat([self_mome_dot, logit_memory], axis=1) # [bz_local, bz_local + mem_size]
+            logit = torch.div(logit, self.T).contiguous()
+            
+            # labels
+            local_cluster_mask = torch.eq(cluster_labels.view(-1, 1), cluster_labels) # [bz_local, bz_local]
+            memo_mask = torch.eq(cluster_labels.view(-1, 1), self.mem_labels.clone().detach()) # [bz_local, mem_size]
+            labels = torch.cat([local_cluster_mask, memo_mask], axis=1) # [bz_local, bz_local + mem_size]
 
-        # apply temperature
-        logits /= self.T
+            # loss
+            exp_logits = torch.exp(logits)
+            log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+            # compute mean
+            mean_log_prob_loss = - (log_prob * labels).sum(1) / labels.sum(1)
+            loss = mean_log_prob_loss.mean()
 
-        # labels: positive key indicators
-        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
+        else:
+            # perform infoNCE loss
+            # compute logits
+            # Einstein sum is more intuitive
+            # positive logits: Nx1
+            l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
+            # negative logits: Nxr
+            l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
+
+            # logits: Nx(1+r)
+            logits = torch.cat([l_pos, l_neg], dim=1)
+
+            # apply temperature
+            logits /= self.T
+
+            # labels: positive key indicators
+            labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
+
+            # loss
+            loss = ce_criterion(logits, labels)
 
         # dequeue and enqueue
         self._dequeue_and_enqueue(k)
 
-        return logits, labels, q, k
+        return loss
 
 
 
